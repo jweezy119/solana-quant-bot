@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+dist/
+
+# Environment — NEVER commit this
+.env
+
+# Runtime state — contains open position data, not needed in repo
+positions.json
+
+# TypeScript build cache
+*.tsbuildinfo
+
+# OS files
+.DS_Store
+Thumbs.db

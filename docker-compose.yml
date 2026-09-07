@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  quant-bot:
+    build: .
+    container_name: solana-quant-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      # Persist positions, journal, and DB across restarts
+      - ./data:/app/data
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

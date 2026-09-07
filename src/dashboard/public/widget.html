@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quant Bot Widget</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #06080e; --bg-card: rgba(13, 19, 32, 0.85); --border: rgba(255,255,255,0.08);
+      --text: #e2e8f0; --text-dim: #94a3b8; --text-muted: #64748b;
+      --cyan: #00f2fe; --purple: #9945ff; --green: #00f5a0; --red: #ff3366; --gold: #ffbe0b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg); color: var(--text); font-family: 'Plus Jakarta Sans', sans-serif;
+      min-height: 100vh; padding: 12px; overflow-x: hidden;
+      background-image: radial-gradient(circle at 20% 20%, rgba(0,242,254,0.04) 0%, transparent 50%),
+                        radial-gradient(circle at 80% 80%, rgba(153,69,255,0.04) 0%, transparent 50%);
+    }
+    .mono { font-family: 'JetBrains Mono', monospace; }
+
+    .widget-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 0; margin-bottom: 10px; border-bottom: 1px solid var(--border);
+    }
+    .widget-brand { display: flex; align-items: center; gap: 8px; }
+    .widget-logo {
+      background: linear-gradient(135deg, var(--cyan), var(--purple));
+      width: 28px; height: 28px; border-radius: 8px; display: flex; align-items: center;
+      justify-content: center; font-size: 13px; font-weight: 800; color: #000;
+    }
+    .widget-title { font-size: 12px; font-weight: 800; letter-spacing: -0.3px; }
+    .widget-title span { color: var(--cyan); }
+    .widget-status { display: flex; align-items: center; gap: 6px; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 6px var(--green); animation: pulse 1.8s infinite; }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.35; } }
+    .status-label { font-size: 10px; color: var(--text-muted); font-weight: 600; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+    .metric {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 12px; position: relative; overflow: hidden;
+    }
+    .metric::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; }
+    .metric.g-cyan::before { background: linear-gradient(90deg, var(--cyan), transparent); }
+    .metric.g-green::before { background: linear-gradient(90deg, var(--green), transparent); }
+    .metric.g-purple::before { background: linear-gradient(90deg, var(--purple), transparent); }
+    .metric.g-gold::before { background: linear-gradient(90deg, var(--gold), transparent); }
+    .m-label { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); }
+    .m-value { font-size: 17px; font-weight: 800; color: #fff; margin-top: 2px; }
+    .m-sub { font-size: 10px; color: var(--text-dim); margin-top: 3px; }
+
+    .positions-section { margin-bottom: 10px; }
+    .section-label { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; }
+    .pos-mini {
+      background: rgba(15, 20, 31, 0.9); border: 1px solid var(--border); border-radius: 7px;
+      padding: 8px 10px; margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;
+    }
+    .pos-mini-left { display: flex; align-items: center; gap: 6px; }
+    .pos-mini-asset { font-size: 12px; font-weight: 800; color: #fff; }
+    .pos-mini-badge { font-size: 8px; padding: 1px 5px; border-radius: 4px; font-weight: 700; background: rgba(255,255,255,0.06); }
+    .pos-mini-pnl { font-size: 12px; font-weight: 800; }
+    .pos-mini-sub { font-size: 9px; color: var(--text-muted); }
+
+    .regime-bar {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 12px; display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 10px;
+    }
+    .regime-bar.stance-down { border-color: rgba(255, 180, 60, 0.35); }
+    .regime-bar.stance-trading { border-color: rgba(80, 240, 160, 0.35); }
+    .regime-label { font-size: 10px; font-weight: 800; text-transform: uppercase; color: var(--purple); display: flex; align-items: center; gap: 5px; }
+    .regime-bar.stance-down .regime-label { color: var(--gold); }
+    .regime-bar.stance-trading .regime-label { color: var(--green); }
+    .regime-val { font-size: 11px; font-weight: 700; color: #fff; }
+
+    .trail {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 10px; max-height: 120px; overflow-y: auto;
+      font-family: 'JetBrains Mono', monospace; font-size: 9px; color: var(--text-dim);
+    }
+    .trail-line { padding: 1px 0; line-height: 1.4; }
+    .trail-line.buy { color: var(--green); font-weight: 700; }
+    .trail-line.sell { color: var(--red); font-weight: 700; }
+
+    .pnl-positive { color: var(--green); }
+    .pnl-negative { color: var(--red); }
+
+    .link-full {
+      display: block; text-align: center; padding: 8px; margin-top: 8px;
+      background: rgba(0,242,254,0.08); border: 1px solid rgba(0,242,254,0.2); border-radius: 8px;
+      color: var(--cyan); font-size: 11px; font-weight: 700; text-decoration: none; transition: all 0.2s;
+    }
+    .link-full:hover { background: rgba(0,242,254,0.15); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="widget-header">
+    <div class="widget-brand">
+      <div class="widget-logo">⚡</div>
+      <div class="widget-title">ANTIGRAVITY <span>QUANT</span></div>
+    </div>
+    <div class="widget-status">
+      <div class="dot" id="wDot"></div>
+      <span class="status-label" id="wStatus">Connecting...</span>
+    </div>
+  </div>
+
+  <!-- Regime -->
+  <div class="regime-bar">
+    <div class="regime-label">🧠 <span id="wRegime">SCANNING</span></div>
+    <div class="regime-val" id="wVPIN">VPIN: --</div>
+  </div>
+
+  <!-- Protection Stance -->
+  <div class="regime-bar" id="wStanceBar" style="display:none;">
+    <div class="regime-label">🛡️ <span id="wStance">--</span></div>
+    <div class="regime-val mono" id="wStanceDetail" style="font-size:9px;">--</div>
+  </div>
+
+  <!-- Core Metrics -->
+  <div class="grid">
+    <div class="metric g-cyan">
+      <div class="m-label">Total Portfolio</div>
+      <div class="m-value mono" id="wTotal">$0.00</div>
+      <div class="m-sub mono" id="wPnl">PnL: +$0.00</div>
+    </div>
+    <div class="metric g-green">
+      <div class="m-label">Win Rate</div>
+      <div class="m-value mono" id="wWR">0%</div>
+      <div class="m-sub mono" id="wPF">1.0x PF</div>
+    </div>
+    <div class="metric g-cyan">
+      <div class="m-label">Coinbase</div>
+      <div class="m-value mono" id="wCB">$0.00</div>
+      <div class="m-sub mono" id="wCBCash">Cash: $0</div>
+    </div>
+    <div class="metric g-green">
+      <div class="m-label">Solana</div>
+      <div class="m-value mono" id="wSOL">$0.00</div>
+      <div class="m-sub mono" id="wSOLBal">0 SOL</div>
+    </div>
+  </div>
+
+  <!-- Positions -->
+  <div class="positions-section">
+    <div class="section-label">Active Positions <span class="mono" id="wPosCount" style="color:var(--cyan);">0</span></div>
+    <div id="wPositions"><div style="text-align:center;color:var(--text-muted);font-size:10px;padding:12px;">No active positions</div></div>
+  </div>
+
+  <!-- Activity Trail -->
+  <div class="section-label">Recent Activity</div>
+  <div class="trail" id="wTrail">
+    <div class="trail-line">[SYSTEM] Widget initialized...</div>
+  </div>
+
+  <a href="/" target="_blank" class="link-full">Open Full Dashboard ↗</a>
+
+  <script>
+    let lastHash = '';
+    let lastTradeLen = 0;
+    const trail = document.getElementById('wTrail');
+
+    function addTrail(msg, cls = '') {
+      const d = document.createElement('div');
+      d.className = 'trail-line ' + cls;
+      d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      trail.appendChild(d);
+      while (trail.children.length > 30) trail.removeChild(trail.firstChild);
+      trail.scrollTop = trail.scrollHeight;
+    }
+
+    function fmtUsd(n) {
+      if (n == null || isNaN(n)) return '$0.00';
+      return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+
+    function fmtPrice(p) {
+      if (p == null || isNaN(p)) return '$0.00';
+      if (p >= 100) return '$' + Number(p).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      if (p >= 1) return '$' + Number(p).toFixed(4);
+      return '$' + Number(p).toFixed(6);
+    }
+
+    function renderWidget(data) {
+      if (!data) return;
+
+      // Regime
+      if (data.aiIntelligence) {
+        document.getElementById('wRegime').textContent = data.aiIntelligence.regimeName;
+        document.getElementById('wVPIN').textContent = `VPIN: ${data.aiIntelligence.vpinStatus}`;
+      }
+
+      // Protection Stance
+      if (data.protection && data.protection.riskStance) {
+        const r = data.protection.riskStance;
+        const bar = document.getElementById('wStanceBar');
+        bar.style.display = 'flex';
+        if (r.standDown) {
+          bar.className = 'regime-bar stance-down';
+          document.getElementById('wStance').textContent = 'STANDING DOWN';
+          document.getElementById('wStanceDetail').textContent = r.blockedToday.length
+            ? `dust-verify | stops capped: ${r.blockedToday.join(',')}`
+            : `dust-verify active (kelly ${r.kellyRaw})`;
+        } else {
+          bar.className = 'regime-bar stance-trading';
+          document.getElementById('wStance').textContent = 'TRADING';
+          document.getElementById('wStanceDetail').textContent = `live edge (kelly ${r.kellyRaw})`;
+        }
+      }
+
+      // Core
+      document.getElementById('wTotal').textContent = fmtUsd(data.portfolio.grandTotalUsd);
+      const pnl = data.metrics.realizedNetPnlUsd;
+      const pnlElem = document.getElementById('wPnl');
+      pnlElem.textContent = `PnL: ${pnl >= 0 ? '+' : ''}${fmtUsd(pnl)}`;
+      pnlElem.className = 'm-sub mono ' + (pnl >= 0 ? 'pnl-positive' : 'pnl-negative');
+
+      document.getElementById('wWR').textContent = `${data.metrics.winRatePct}%`;
+      document.getElementById('wPF').textContent = `${data.metrics.profitFactor}x PF | ${data.metrics.wins}W/${data.metrics.losses}L`;
+
+      document.getElementById('wCB').textContent = fmtUsd(data.portfolio.coinbaseEquityUsd);
+      document.getElementById('wCBCash').textContent = `Cash: ${fmtUsd(data.portfolio.coinbaseCashUsd)}`;
+
+      document.getElementById('wSOL').textContent = fmtUsd(data.portfolio.solanaEquityUsd);
+      document.getElementById('wSOLBal').textContent = `${data.portfolio.solanaCashSol.toFixed(4)} SOL`;
+
+      // Positions
+      const cb = data.positions.coinbase || [];
+      const sol = data.positions.solana || [];
+      const all = cb.concat(sol);
+      document.getElementById('wPosCount').textContent = all.length;
+
+      const posDiv = document.getElementById('wPositions');
+      if (all.length === 0) {
+        posDiv.innerHTML = '<div style="text-align:center;color:var(--text-muted);font-size:10px;padding:12px;">No active positions</div>';
+      } else {
+        posDiv.innerHTML = all.map(p => {
+          const isCb = !!p.productId;
+          const name = isCb ? p.productId : `$${p.symbol}`;
+          const pnlPct = isCb ? p.pnlPct : p.pnlPct;
+          const isProfit = pnlPct >= 0;
+          const sign = isProfit ? '+' : '';
+          const pnlStr = isCb ? `${sign}${fmtUsd(p.pnlUsd)} (${sign}${pnlPct.toFixed(2)}%)` : `${sign}${pnlPct.toFixed(1)}%`;
+          const venue = isCb ? 'CEX' : 'DEX';
+          const entry = isCb ? fmtPrice(p.entryPrice) : fmtPrice(p.entryPriceUsd);
+          const curr = isCb ? fmtPrice(p.livePrice) : fmtPrice(p.livePriceUsd);
+          return `<div class="pos-mini">
+            <div class="pos-mini-left">
+              <span class="pos-mini-asset">${name}</span>
+              <span class="pos-mini-badge" style="color:${isCb ? 'var(--cyan)' : 'var(--green)'}">${venue}</span>
+            </div>
+            <div style="text-align:right;">
+              <div class="pos-mini-pnl ${isProfit ? 'pnl-positive' : 'pnl-negative'} mono">${pnlStr}</div>
+              <div class="pos-mini-sub mono">${entry} → ${curr}</div>
+            </div>
+          </div>`;
+        }).join('');
+      }
+
+      // Position change detection
+      const hash = JSON.stringify(all.map(p => p.productId || p.tokenAddress));
+      if (lastHash && lastHash !== hash) {
+        addTrail('Positions updated', 'buy');
+      }
+      lastHash = hash;
+
+      // Trade trail
+      if (data.recentTrades && data.recentTrades.length > lastTradeLen && lastTradeLen > 0) {
+        const t = data.recentTrades[0];
+        const pnl = t.netPnlUsd || t.pnlUsd || 0;
+        addTrail(`Trade: ${t.symbol || t.productId} ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`, pnl >= 0 ? 'buy' : 'sell');
+      }
+      lastTradeLen = data.recentTrades ? data.recentTrades.length : 0;
+    }
+
+    // SSE
+    function setupWidgetSSE() {
+      const dot = document.getElementById('wDot');
+      const status = document.getElementById('wStatus');
+      const es = new EventSource('/api/stream');
+      es.onopen = () => { dot.style.background = 'var(--green)'; dot.style.boxShadow = '0 0 6px var(--green)'; status.textContent = 'Live'; };
+      es.onmessage = (e) => { try { renderWidget(JSON.parse(e.data)); } catch(err) {} };
+      es.onerror = () => { dot.style.background = 'var(--gold)'; dot.style.boxShadow = '0 0 6px var(--gold)'; status.textContent = 'Reconnecting...'; };
+    }
+
+    fetch('/api/state').then(r => r.json()).then(d => renderWidget(d)).catch(() => {});
+    setupWidgetSSE();
+  </script>
+</body>
+</html>

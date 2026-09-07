@@ -44,26 +44,26 @@ const POLL_INTERVAL_MS  = 3_000;
 const POSITIONS_FILE    = "./positions.json";
 
 // Capital
-const SWING_POS_USDC_RAW      =  6 * 1_000_000;   // $6 base position
-const SWING_POS_BOOSTED_RAW   =  9 * 1_000_000;   // $9 when cross-DEX confirms
+const SWING_POS_USDC_RAW      = 15 * 1_000_000;   // $15 base position
+const SWING_POS_BOOSTED_RAW   = 20 * 1_000_000;   // $20 when cross-DEX confirms
 const CROSS_DEX_USDC_RAW      = 12 * 1_000_000;   // $12 cross-DEX check
 const MAX_SWING_POSITIONS      = 4;
 
 // Swing — FIXED 2:1 Risk/Reward
-const BASE_SELL_PCT   = 4.0;   // take-profit: +4% from entry
-const BASE_STOP_PCT   = 2.0;   // stop-loss:   -2% from entry
+const BASE_SELL_PCT   = 3.5;   // take-profit: +3.5% from entry
+const BASE_STOP_PCT   = 1.5;   // stop-loss:   -1.5% from entry
 const PARTIAL_SELL    = 0.60;  // sell 60% at target, trail 40%
 
 // ATR-adaptive bounds (multiplied by ATR%)
-const ATR_DIP_MULT    = 1.2;   // dip threshold  = ATR% × 1.2
+const ATR_DIP_MULT    = 1.0;   // dip threshold  = ATR% × 1.0 (tighter for faster entries)
 const ATR_SELL_MULT   = 2.0;   // sell threshold = ATR% × 2.0
 const ATR_STOP_MULT   = 1.0;   // stop threshold = ATR% × 1.0
-const MIN_DIP_PCT     = 1.5;   // floor
+const MIN_DIP_PCT     = 1.0;   // floor (tighter)
 const MAX_DIP_PCT     = 4.5;   // ceiling
 
 // Trailing stop — activates once price is +2% above entry
-const TRAIL_ACTIVATION_PCT = 2.0;  // activate trailing stop at +2%
-const TRAIL_DISTANCE_PCT   = 1.5;  // trail 1.5% below peak
+const TRAIL_ACTIVATION_PCT = 1.5;  // activate trailing stop at +1.5%
+const TRAIL_DISTANCE_PCT   = 1.2;  // trail 1.2% below peak
 
 // EMA periods
 const EMA_FAST_PERIOD = 10;
@@ -78,17 +78,17 @@ const DEX_LABELS      = ["Raydium", "Orca", "Meteora"];
 const SLIPPAGE_BPS = 50;
 
 // ============================================================
-//  🪙  TOKENS  (PENGU removed — zero liquidity)
+//  🪙  TOKENS
 // ============================================================
 const USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 interface TokenInfo { symbol: string; mint: string; decimals: number; }
 
 const TOKENS: TokenInfo[] = [
-  { symbol: "SOL",      mint: "So11111111111111111111111111111111111111112",  decimals: 9 },
-  { symbol: "BONK",     mint: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263", decimals: 5 },
+  { symbol: "WIF",      mint: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm", decimals: 6 },
+  { symbol: "POPCAT",   mint: "7GCihgDB8fe6KNjn2grciq8T7J2P4KkHnbqZ6Dq3pump", decimals: 6 },
+  { symbol: "MOODENG",  mint: "ED5nyyWEzpPPiWimP8vYm7sD7TD3LAt3Qp8M3eYipump", decimals: 6 },
   { symbol: "FARTCOIN", mint: "9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump", decimals: 6 },
-  { symbol: "TRUMP",    mint: "6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN", decimals: 6 },
 ];
 
 // ============================================================

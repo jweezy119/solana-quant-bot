@@ -1,21 +1,47 @@
 {
-  "name": "sol-arb-bot",
-  "version": "1.0.0",
-  "description": "Solana triangular arbitrage bot via Jupiter v6",
-  "main": "dist/index.js",
+  "name": "solana-quant-bot",
+  "version": "3.0.0",
+  "description": "AI-augmented Solana quant trading bot with Bayesian signal fusion, Kelly Criterion sizing, and regime detection",
+  "main": "dist/src/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node index.ts"
+    "start": "node dist/src/index.js",
+    "dev": "ts-node src/index.ts",
+    "dev:legacy": "ts-node index.ts",
+    "start:bg": "nohup node dist/src/index.js > bot.log 2>&1 &",
+    "logs": "tail -n 100 -f bot.log",
+    "coinbase": "ts-node src/coinbase/bot.ts",
+    "coinbase:live": "COINBASE_SIMULATION=false ts-node src/coinbase/bot.ts",
+    "coinbase:bg": "nohup npx ts-node src/coinbase/bot.ts > coinbase.log 2>&1 &",
+    "coinbase:logs": "tail -n 100 -f coinbase.log",
+    "coinbase:grid": "ts-node src/coinbase/smart-grid.ts",
+    "meme:scan": "MEME_SNIPER_SIMULATION=true ts-node src/solana/meme-sniper.ts",
+    "meme:live": "MEME_SNIPER_SIMULATION=false ts-node src/solana/meme-sniper.ts",
+    "dashboard": "ts-node src/dashboard/server.ts",
+    "dashboard:bg": "nohup npx ts-node src/dashboard/server.ts > dashboard.log 2>&1 &",
+    "dashboard:logs": "tail -n 100 -f dashboard.log",
+    "docker:build": "docker build -t solana-quant-bot .",
+    "docker:run": "docker compose up -d",
+    "docker:logs": "docker compose logs -f",
+    "docker:stop": "docker compose down"
   },
   "dependencies": {
     "@solana/web3.js": "^1.95.3",
+    "@types/ws": "^8.18.1",
     "bs58": "^5.0.0",
-    "dotenv": "^17.4.2"
+    "dotenv": "^17.4.2",
+    "jose": "^6.2.11",
+    "jsonwebtoken": "^9.0.3",
+    "openai": "^7.10.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.14.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.2"
+  },
+  "optionalDependencies": {
+    "@tensorflow/tfjs-node": "^4.20.0"
   }
 }

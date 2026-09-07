@@ -309,16 +309,24 @@ async function getCandleRegime(): Promise<'BULL' | 'BEAR'> {
 const IS_BEAR_SNIPER = process.env.COINBASE_REGIME !== 'BULL';
 
 export const QUANT_CONFIG = {
-  minTradeUsd: 10.00,                                     // Raised to $10 so maker fees don't eat micro-profits
-  maxPositionPct: IS_BEAR_SNIPER ? 0.20 : 0.25,           // Lowered to 25% to spread risk across more assets
-  maxConcurrentPositions: IS_BEAR_SNIPER ? 3 : 4,         // Increased to 4 concurrent positions
-  minCashReserveUsd: IS_BEAR_SNIPER ? 10.00 : 5.00,       // Keep a $5 cash buffer
-  minConfidenceThreshold: IS_BEAR_SNIPER ? 0.70 : 0.65,   // Require 70%+ high conviction
-  stopLossPct: 0.035,                                     // Widened to -3.5% (prevents getting chopped out by noise)
-  takeProfitPct: 0.055,                                   // Widened to +5.5% (outruns the 1.2% round-trip maker fee)
-  trailingTriggerPct: 0.035,                              // Activate trailing ratchet at +3.5% gain
-  trailingLockPct: 0.018,                                 // Lock stop to +1.8% (guarantees positive cash after 1.2% fee)
-  makerFeeRate: 0.006,                                    // 0.60% Coinbase Intro 1 Maker fee
+  minTradeUsd: parseFloat(process.env.COINBASE_MIN_TRADE_USD || '10.00'),
+  maxPositionPct: IS_BEAR_SNIPER 
+    ? parseFloat(process.env.COINBASE_BEAR_MAX_POS_PCT || '0.20')
+    : parseFloat(process.env.COINBASE_BULL_MAX_POS_PCT || '0.25'),
+  maxConcurrentPositions: IS_BEAR_SNIPER
+    ? parseInt(process.env.COINBASE_BEAR_MAX_POS || '3')
+    : parseInt(process.env.COINBASE_BULL_MAX_POS || '4'),
+  minCashReserveUsd: IS_BEAR_SNIPER
+    ? parseFloat(process.env.COINBASE_BEAR_MIN_CASH || '10.00')
+    : parseFloat(process.env.COINBASE_BULL_MIN_CASH || '5.00'),
+  minConfidenceThreshold: IS_BEAR_SNIPER
+    ? parseFloat(process.env.COINBASE_BEAR_MIN_CONF || '0.70')
+    : parseFloat(process.env.COINBASE_BULL_MIN_CONF || '0.65'),
+  stopLossPct: parseFloat(process.env.COINBASE_STOP_LOSS_PCT || '0.035'),
+  takeProfitPct: parseFloat(process.env.COINBASE_TAKE_PROFIT_PCT || '0.055'),
+  trailingTriggerPct: parseFloat(process.env.COINBASE_TRAILING_TRIGGER_PCT || '0.035'),
+  trailingLockPct: parseFloat(process.env.COINBASE_TRAILING_LOCK_PCT || '0.018'),
+  makerFeeRate: parseFloat(process.env.COINBASE_MAKER_FEE_RATE || '0.006'),
   takerFeeRate: 0.012,                                    // 1.20% Taker fee
   executionMode: 'LIMIT_MAKER',                           // Strict post-only maker limit orders
   regime: IS_BEAR_SNIPER ? 'BEAR_SNIPER' : 'NORMAL',

@@ -25,6 +25,9 @@ import {
 import { getAccountBalance } from './client';
 import { pollAlphaRadar, getAlphaRadarState } from '../radar/alpha-radar';
 import { checkCoinbaseNewListings, evaluateListingMomentum } from '../radar/coinbase-listing';
+import { scanTopVolumeAssets } from '../radar/market-scanner';
+import { updateGrid } from './grid-manager';
+import { syncWalletToPositions } from './wallet-sync';
 
 // ─── CONFIGURATION ───────────────────────────────────────────
 
@@ -83,15 +86,20 @@ function formatArb(spreadPct: number, dir: string): string {
   return `Arb:${text}`;
 }
 
+let lastKnownCash: number | null = null;
+export let lastKnownHold: number = 0;
+
 async function getAvailableCash(): Promise<number> {
+  if (isSimulationMode()) return DEFAULT_SIM_CAPITAL;
   try {
-    const usd = await getAccountBalance('USD');
-    const usdc = await getAccountBalance('USDC');
-    const total = usd + usdc;
-    if (total > 0) return total;
-    return DEFAULT_SIM_CAPITAL;
+    const syncRes = await syncWalletToPositions();
+    if (syncRes.usdcAvailable > 0 || syncRes.usdcHold > 0) {
+      lastKnownCash = syncRes.usdcAvailable;
+      lastKnownHold = syncRes.usdcHold;
+    }
+    return lastKnownCash !== null ? lastKnownCash : DEFAULT_SIM_CAPITAL;
   } catch {
-    return DEFAULT_SIM_CAPITAL;
+    return lastKnownCash !== null ? lastKnownCash : DEFAULT_SIM_CAPITAL;
   }
 }
 
@@ -106,7 +114,7 @@ async function resolveProducts(configured: string[]): Promise<string[]> {
   return configured;
 }
 
-import { connectWebsocket, getLiveMetrics } from './websocket';
+import { connectWebsocket, getLiveMetrics, updateWebsocketSubscriptions } from './websocket';
 
 // ─── MAIN BOT SCAN LOOP ──────────────────────────────────────
 
@@ -123,7 +131,9 @@ async function startCoinbaseBot() {
   console.log('  🔬  Dust-Verify Loop: no Kelly edge ⇒ $5 dust re-proves the family instead of freezing');
   console.log(`  🚀  Runner Mode: zero-fee family winners trail the peak instead of sniping micro-premiums`);
   console.log(`  💸  Fee Leak Kill-Switch: all BUYs halt at $${process.env.COINBASE_MAX_FEES_PER_DAY_USD || '0.50'}/day in fees`);
-  console.log(`  📐  Kelly Compounding: Half-Kelly │ Max Pos: ${(QUANT_CONFIG.maxPositionPct * 100)}% (~$${(DEFAULT_SIM_CAPITAL * QUANT_CONFIG.maxPositionPct).toFixed(2)}) │ Cash Buffer: $${QUANT_CONFIG.minCashReserveUsd.toFixed(2)} min`);
+  const kellyFrac = parseFloat(process.env.COINBASE_KELLY_FRACTION || '0.5');
+  const kellyStr = kellyFrac >= 1.0 ? 'Full-Kelly' : (kellyFrac === 0.5 ? 'Half-Kelly' : `${kellyFrac}x-Kelly`);
+  console.log(`  📐  Kelly Compounding: ${kellyStr} │ Max Pos: ${(QUANT_CONFIG.maxPositionPct * 100)}% (~$${(DEFAULT_SIM_CAPITAL * QUANT_CONFIG.maxPositionPct).toFixed(2)}) │ Cash Buffer: $${QUANT_CONFIG.minCashReserveUsd.toFixed(2)} min`);
   console.log(`  🎯  Sniper Targets: +${(QUANT_CONFIG.takeProfitPct * 100).toFixed(1)}% Fast TP │ -${(QUANT_CONFIG.stopLossPct * 100).toFixed(1)}% Cut SL │ +${(QUANT_CONFIG.trailingLockPct * 100).toFixed(1)}% Net Lock`);
   console.log(`  ⚡  Execution: 🛡️ LIMIT MAKER ONLY (post_only: true) │ 0.6% Maker Fee (Zero Taker Churn)`);
   console.log(`  🐦  Social & War NLP: Active Twitter/News Feed (Liquidation Cascade Freeze enabled)`);
@@ -164,6 +174,19 @@ async function startCoinbaseBot() {
     const currentPrices: Record<string, number> = {};
     const positions = loadPositions();
     const metrics = getPerformanceMetrics();
+
+    // ─── Ensure synced manual bags are actively scanned ───
+    let updatedWatchlist = false;
+    for (const pid of Object.keys(positions)) {
+      if (!activeProducts.includes(pid)) {
+         activeProducts.push(pid);
+         updatedWatchlist = true;
+      }
+    }
+    if (updatedWatchlist) {
+      updateWebsocketSubscriptions(activeProducts);
+      console.log(`\n🎯 [WALLET SYNC] Watchlist automatically expanded to cover manual bags: [${activeProducts.join(', ')}]`);
+    }
 
     // 1. Scan and compute current market prices for all products
     const scanResults: Record<string, any> = {};
@@ -225,16 +248,37 @@ async function startCoinbaseBot() {
       }
     }
 
+    // ─── DYNAMIC ASSET ROTATION (AUTO-HUNTING) ──────────────
+    if (scanCount % 150 === 2) { // Runs roughly every 30 minutes
+      try {
+        const topAssets = await scanTopVolumeAssets(5); // Top 5 high-vol, low-spread assets
+        if (topAssets.length > 0) {
+          // Preserve assets that currently have an open position
+          const openPositionIds = Object.keys(positions);
+          const nextWatchlist = Array.from(new Set([...topAssets, ...openPositionIds]));
+          
+          activeProducts.length = 0;
+          activeProducts.push(...nextWatchlist);
+          updateWebsocketSubscriptions(activeProducts);
+          console.log(`\n🎯 [DYNAMIC ROTATION] Watchlist updated with top volume leaders: [${activeProducts.join(', ')}]`);
+        }
+      } catch (err: any) {
+        console.error('  ⚠️ Rotation scanner error:', err.message);
+      }
+    }
+
     const pSign = totalNetProfitUsd >= 0 ? '+' : '';
     const rSign = metrics.totalRealizedPnl >= 0 ? '+' : '';
     const uSign = unrealizedPnlUsd >= 0 ? '+' : '';
 
     // ─── DASHBOARD PROFIT HEADER ────────────────────────────
     console.log(`\n─── Scan #${scanCount}  [${timestamp}] ─────────────────────────────────────────────────────────────`);
-    console.log(`  💼 Active Equity: $${totalPortfolioEquity.toFixed(2)} │ Cash: $${availableCash.toFixed(2)} │ Open: ${Object.keys(positions).length}/${QUANT_CONFIG.maxConcurrentPositions}`);
+    const holdText = lastKnownHold > 0 ? ` (+ $${lastKnownHold.toFixed(2)} Uncleared)` : '';
+    const equityLog = `  💼 Active Equity: $${totalPortfolioEquity.toFixed(2)} │ Cash: $${availableCash.toFixed(2)}${holdText} │ Open: ${Object.keys(positions).length}/${QUANT_CONFIG.maxConcurrentPositions}`;
+    console.log(equityLog);
     console.log(`  📈 NET PROFIT: ${pSign}$${totalNetProfitUsd.toFixed(2)} (${pSign}${totalNetProfitPct.toFixed(2)}%) │ Realized Net: ${rSign}$${metrics.totalRealizedPnl.toFixed(2)} │ Unrealized: ${uSign}$${unrealizedPnlUsd.toFixed(2)}`);
     if (metrics.totalFeesPaid > 0) {
-      console.log(`  💸 Fee Audit: Gross PnL: $${metrics.totalGrossPnl.toFixed(2)} │ Fees Paid: -$${metrics.totalFeesPaid.toFixed(2)} │ Net: $${metrics.totalRealizedPnl.toFixed(2)}`);
+      console.log(`  💸 Fee Audit: Gross PnL: $${metrics.totalGrossPnl.toFixed(2)} │ Fees Paid: -$${metrics.totalFeesPaid.toFixed(2)} │ Net: ${metrics.totalRealizedPnl.toFixed(2)}`);
     }
     console.log(`  🏆 Performance: ${metrics.totalTrades} Closed Trades │ Win Rate: ${metrics.winRatePct.toFixed(1)}% (${metrics.wins}W / ${metrics.losses}L / ${metrics.breakevens}BE)`);
     const radar = getAlphaRadarState();
@@ -275,6 +319,9 @@ async function startCoinbaseBot() {
         if (proposal.action !== 'HOLD') {
           await executeAIProposal(proposal, availableCash, technical.currentPrice, totalPortfolioEquity);
         }
+
+        // ─── GRID MARKET MAKER ───
+        await updateGrid(productId, technical.currentPrice, proposal.atrPct, availableCash, !!positions[productId]);
       } catch (err: any) {
         console.error(`  ⚠️ Error processing ${productId}:`, err.message);
       }

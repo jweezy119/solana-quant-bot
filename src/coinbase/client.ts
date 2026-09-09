@@ -5,7 +5,7 @@ const API_BASE = 'https://api.coinbase.com';
 const API_NAME = process.env.COINBASE_API_NAME || '';
 const API_SECRET = (process.env.COINBASE_API_PRIVATE_KEY || '').replace(/\\n/g, '\n');
 
-export async function coinbaseFetch(method: string, path: string, body?: any) {
+export async function coinbaseFetch(method: string, path: string, body?: any, retries = 2): Promise<any> {
     if (!API_NAME || !API_SECRET) throw new Error('Missing Coinbase API credentials');
     
     const token = await generateToken(API_NAME, API_SECRET, method, path);
@@ -19,12 +19,24 @@ export async function coinbaseFetch(method: string, path: string, body?: any) {
         options.body = JSON.stringify(body);
     }
 
-    const res = await fetch(`${API_BASE}${path}`, options);
-    if (!res.ok) {
-        const err = await res.text();
-        throw new Error(`Coinbase API Error (${res.status}): ${err}`);
+    try {
+        const res = await fetch(`${API_BASE}${path}`, options);
+        if (!res.ok) {
+            if (res.status === 429 && retries > 0) {
+                await new Promise(r => setTimeout(r, 1000));
+                return coinbaseFetch(method, path, body, retries - 1);
+            }
+            const err = await res.text();
+            throw new Error(`Coinbase API Error (${res.status}): ${err}`);
+        }
+        return await res.json();
+    } catch (e: any) {
+        if (retries > 0 && (e.message.includes('fetch failed') || e.code === 'ECONNRESET' || e.code === 'ETIMEDOUT')) {
+            await new Promise(r => setTimeout(r, 1000));
+            return coinbaseFetch(method, path, body, retries - 1);
+        }
+        throw e;
     }
-    return res.json();
 }
 
 /**
@@ -37,6 +49,25 @@ export async function getAccounts(limit: number = 250) {
 /**
  * Get available balance for a specific currency (e.g. 'USD', 'USDC', 'BTC')
  */
+/**
+ * Get all accounts (wallets) with balances
+ */
+export async function getAllAccounts(): Promise<any[]> {
+    let hasNext = true;
+    let cursor = '';
+    const allAccounts: any[] = [];
+    
+    while (hasNext) {
+        const data = await coinbaseFetch('GET', `/api/v3/brokerage/accounts?limit=250${cursor ? '&cursor=' + cursor : ''}`) as any;
+        if (data.accounts) {
+            allAccounts.push(...data.accounts);
+        }
+        cursor = data.cursor;
+        hasNext = !!cursor;
+    }
+    return allAccounts;
+}
+
 export async function getAccountBalance(currency: string, includeHolds: boolean = false): Promise<number> {
     try {
         let hasNext = true;
@@ -58,6 +89,13 @@ export async function getAccountBalance(currency: string, includeHolds: boolean 
     } catch (e: any) {
         return 0;
     }
+}
+
+/**
+ * Get all available products (markets)
+ */
+export async function getProducts(limit: number = 100) {
+    return coinbaseFetch('GET', `/api/v3/brokerage/products?limit=${limit}&product_type=SPOT`);
 }
 
 /**

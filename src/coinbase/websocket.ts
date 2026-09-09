@@ -9,24 +9,26 @@ export interface OFIMetrics {
 
 const ofiState: Record<string, OFIMetrics> = {};
 let ws: WebSocket | null = null;
+let currentProducts: string[] = [];
 
 export function getLiveMetrics(productId: string): OFIMetrics | null {
     return ofiState[productId] || null;
 }
 
 export function connectWebsocket(products: string[]) {
+    currentProducts = products;
     ws = new WebSocket('wss://advanced-trade-ws.coinbase.com');
     
     ws!.on('open', () => {
         console.log('📡 [Coinbase WS] Connected. Subscribing to L2 Orderbook and Tickers...');
         ws!.send(JSON.stringify({
             type: 'subscribe',
-            product_ids: products,
+            product_ids: currentProducts,
             channel: 'level2'
         }));
         ws!.send(JSON.stringify({
             type: 'subscribe',
-            product_ids: products,
+            product_ids: currentProducts,
             channel: 'ticker'
         }));
     });
@@ -93,4 +95,21 @@ export function connectWebsocket(products: string[]) {
     ws!.on('error', (err) => {
         console.error('📡 [Coinbase WS] Error:', err.message);
     });
+}
+
+export function updateWebsocketSubscriptions(newProducts: string[]) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        // Unsubscribe old
+        ws.send(JSON.stringify({ type: 'unsubscribe', product_ids: currentProducts, channel: 'level2' }));
+        ws.send(JSON.stringify({ type: 'unsubscribe', product_ids: currentProducts, channel: 'ticker' }));
+        
+        currentProducts = newProducts;
+        
+        // Subscribe new
+        ws.send(JSON.stringify({ type: 'subscribe', product_ids: currentProducts, channel: 'level2' }));
+        ws.send(JSON.stringify({ type: 'subscribe', product_ids: currentProducts, channel: 'ticker' }));
+        console.log(`📡 [Coinbase WS] Re-subscribed to dynamically rotated watchlist.`);
+    } else {
+        currentProducts = newProducts; // Will be picked up on next reconnect
+    }
 }

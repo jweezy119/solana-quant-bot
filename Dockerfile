@@ -31,6 +31,10 @@ RUN npm install --omit=dev --ignore-optional 2>/dev/null || npm install --omit=d
 # Copy compiled JS from builder
 COPY --from=builder /app/dist ./dist
 
+# Copy entrypoint script
+COPY scripts/start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+
 # Create data directory
 RUN mkdir -p /app/data && chown -R botuser:botuser /app
 
@@ -40,4 +44,5 @@ USER botuser
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD pgrep -x node || exit 1
 
-CMD ["node", "dist/src/index.js"]
+# Default: start.sh reads SERVICE_MODE to pick bot or dashboard
+CMD ["/app/start.sh"]

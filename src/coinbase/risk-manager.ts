@@ -462,7 +462,8 @@ export function calculateCompoundedSize(
     return { tradeAmountUsd: 0, sizingPct: 0, kellyRaw: parseFloat(kellyRaw.toFixed(3)) };
   }
 
-  const safeKelly = kellyRaw * 0.5; // Half-Kelly: conservative even with a real edge
+  const kellyFraction = parseFloat(process.env.COINBASE_KELLY_FRACTION || '0.5');
+  const safeKelly = kellyRaw * kellyFraction; // Full/Fractional Kelly config
 
   const correlationFactor = Math.max(0.60, 1 - existingPositionsCount * 0.15);
   const confidenceMultiplier = Math.max(0.5, confidence);

@@ -10,6 +10,7 @@ import 'dotenv/config';
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { getConsolidatedState } from './state';
 
 const PORT = parseInt(process.env.DASHBOARD_PORT || process.env.PORT || '3000', 10);
@@ -18,6 +19,61 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const SOURCE_PUBLIC_DIR = path.join(process.cwd(), 'src', 'dashboard', 'public');
 const INDEX_HTML_PATH = path.join(fs.existsSync(path.join(PUBLIC_DIR, 'index.html')) ? PUBLIC_DIR : SOURCE_PUBLIC_DIR, 'index.html');
 const WIDGET_HTML_PATH = path.join(fs.existsSync(path.join(PUBLIC_DIR, 'widget.html')) ? PUBLIC_DIR : SOURCE_PUBLIC_DIR, 'widget.html');
+
+// ─── BASIC AUTH CONFIGURATION ──────────────────────────────────────────────
+const AUTH_USER = process.env.DASHBOARD_USER || '';
+const AUTH_PASS = process.env.DASHBOARD_PASS || '';
+const AUTH_ENABLED = AUTH_USER.length > 0 && AUTH_PASS.length > 0;
+const TUNNEL_URL_FILE = path.join(process.env.DATA_DIR || path.join(process.cwd(), 'data'), 'tunnel-url.txt');
+
+const AUTH_REALM = 'Quant Command Center';
+
+/**
+ * Validate HTTP Basic Auth credentials using timing-safe comparison.
+ * Returns true if auth is disabled (no credentials configured) or valid.
+ */
+function checkAuth(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+  if (!AUTH_ENABLED) return true;
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Basic ')) {
+    res.writeHead(401, {
+      'WWW-Authenticate': `Basic realm="${AUTH_REALM}"`,
+      'Content-Type': 'text/html; charset=utf-8',
+    });
+    res.end(`<!DOCTYPE html><html><head><title>401 — Authentication Required</title>
+<style>body{background:#0a0a0f;color:#00ff88;font-family:'Courier New',monospace;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+.box{text-align:center;border:1px solid #00ff8844;padding:3rem;border-radius:12px;background:#0a0a0f99}
+h1{font-size:2.5rem;margin:0 0 1rem}p{color:#888;font-size:1.1rem}</style></head>
+<body><div class="box"><h1>🔐 ACCESS DENIED</h1><p>Quant Command Center requires authentication.</p></div></body></html>`);
+    return false;
+  }
+
+  try {
+    const encoded = authHeader.slice(6);
+    const decoded = Buffer.from(encoded, 'base64').toString('utf-8');
+    const colonIndex = decoded.indexOf(':');
+    if (colonIndex === -1) throw new Error('Invalid format');
+
+    const providedUser = decoded.slice(0, colonIndex);
+    const providedPass = decoded.slice(colonIndex + 1);
+
+    // Timing-safe comparison to prevent timing attacks
+    const userMatch = providedUser.length === AUTH_USER.length &&
+      crypto.timingSafeEqual(Buffer.from(providedUser), Buffer.from(AUTH_USER));
+    const passMatch = providedPass.length === AUTH_PASS.length &&
+      crypto.timingSafeEqual(Buffer.from(providedPass), Buffer.from(AUTH_PASS));
+
+    if (userMatch && passMatch) return true;
+  } catch {}
+
+  res.writeHead(401, {
+    'WWW-Authenticate': `Basic realm="${AUTH_REALM}"`,
+    'Content-Type': 'text/plain',
+  });
+  res.end('Invalid credentials');
+  return false;
+}
 
 // Keep track of connected SSE clients
 const sseClients: Set<http.ServerResponse> = new Set();
@@ -47,6 +103,16 @@ setInterval(refreshStateAndBroadcast, 2500);
 
 const server = http.createServer(async (req, res) => {
   const url = req.url || '/';
+
+  // 0. Health check is EXEMPT from auth (Docker healthcheck needs it)
+  if (url === '/api/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), sseConnections: sseClients.size, authEnabled: AUTH_ENABLED }));
+    return;
+  }
+
+  // 0b. Auth gate — every other route requires valid credentials
+  if (!checkAuth(req, res)) return;
 
   // 1. Single-Page Application (HTML)
   if (url === '/' || url === '/index.html') {
@@ -134,10 +200,21 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 4. Health Check
-  if (url === '/api/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', uptime: process.uptime(), sseConnections: sseClients.size }));
+  // 4. Tunnel URL (read from shared volume written by cloudflared)
+  if (url === '/api/tunnel-url') {
+    try {
+      if (fs.existsSync(TUNNEL_URL_FILE)) {
+        const tunnelUrl = fs.readFileSync(TUNNEL_URL_FILE, 'utf-8').trim();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ url: tunnelUrl }));
+      } else {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ url: null, message: 'Tunnel not active — access locally at http://localhost:3000' }));
+      }
+    } catch {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ url: null }));
+    }
     return;
   }
 
@@ -184,9 +261,20 @@ function startServer(port: number) {
   server.listen(port, '0.0.0.0', () => {
     console.log(`\n═══════════════════════════════════════════════════════════════════`);
     console.log(`  📊 QUANT COMMAND CENTER DASHBOARD LIVE`);
-    console.log(`  🌐 URL: http://localhost:${port}`);
-    console.log(`  📌 WIDGET: http://localhost:${port}/widget`);
-    console.log(`  ⚡ Real-Time SSE Telemetry: http://localhost:${port}/api/stream`);
+    console.log(`  🌐 Local URL: http://localhost:${port}`);
+    console.log(`  📌 Widget: http://localhost:${port}/widget`);
+    console.log(`  ⚡ SSE Telemetry: http://localhost:${port}/api/stream`);
+    console.log(`  🔐 Auth: ${AUTH_ENABLED ? `ENABLED (user: ${AUTH_USER})` : 'DISABLED — set DASHBOARD_USER & DASHBOARD_PASS to enable'}`);
+    // Show tunnel URL if available
+    try {
+      if (fs.existsSync(TUNNEL_URL_FILE)) {
+        const tunnelUrl = fs.readFileSync(TUNNEL_URL_FILE, 'utf-8').trim();
+        if (tunnelUrl) {
+          console.log(`  🌍 Remote URL: ${tunnelUrl}`);
+          console.log(`  📱 Access from ANY device at the URL above`);
+        }
+      }
+    } catch {}
     console.log(`  💼 Dual-Venue Sync: Coinbase CEX Maker + Solana DEX Sniper`);
     console.log(`═══════════════════════════════════════════════════════════════════\n`);
   });

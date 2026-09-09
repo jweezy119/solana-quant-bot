@@ -1,0 +1,90 @@
+# ═══════════════════════════════════════════════════════════════
+#  Solana Quant Bot — Production Docker Compose
+#  3-service stack: Trading Bot + Dashboard + Cloudflare Tunnel
+# ═══════════════════════════════════════════════════════════════
+
+services:
+  # ─── Trading Bot ──────────────────────────────────────────
+  trading-bot:
+    build: .
+    container_name: sqb-trading-bot
+    restart: unless-stopped
+    environment:
+      - SERVICE_MODE=bot
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./src/dashboard/public:/app/src/dashboard/public:ro
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2.0"
+    healthcheck:
+      test: ["CMD", "pgrep", "-x", "node"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ─── Dashboard Server ────────────────────────────────────
+  dashboard:
+    build: .
+    container_name: sqb-dashboard
+    restart: unless-stopped
+    environment:
+      - SERVICE_MODE=dashboard
+    env_file:
+      - .env
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+      - ./src/dashboard/public:/app/src/dashboard/public:ro
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http=require('http');const r=http.get('http://127.0.0.1:3000/api/health',{timeout:3000},s=>{process.exit(s.statusCode===200?0:1)});r.on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    depends_on:
+      trading-bot:
+        condition: service_started
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ─── Cloudflare Quick Tunnel (Free, No Domain Needed) ───
+  cloudflare-tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: sqb-tunnel
+    restart: unless-stopped
+    command: tunnel --url http://dashboard:3000 --no-autoupdate
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      dashboard:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.5"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"
+        max-file: "3"

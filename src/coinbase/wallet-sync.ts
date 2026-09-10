@@ -1,5 +1,5 @@
 import { getAllAccounts, getTicker } from './client';
-import { loadPositions, savePositions, isSimulationMode } from './risk-manager';
+import { loadPositions, savePositions, isSimulationMode, QUANT_CONFIG } from './risk-manager';
 
 export async function syncWalletToPositions(): Promise<{ importedProducts: string[], usdcAvailable: number, usdcHold: number }> {
     const isSim = isSimulationMode();
@@ -59,9 +59,9 @@ export async function syncWalletToPositions(): Promise<{ importedProducts: strin
                         console.log(`\n💼 [WALLET SYNC] Found undocumented manual bag of ${currency}: ${total.toFixed(4)} (~$${sizeUsd.toFixed(2)})`);
                         console.log(`   ↳ Importing into AI Portfolio for active management (TP/SL).`);
                         
-                        // Construct synthetic position
-                        const stopLossPct = 0.08; // 8% default stop loss for manual bags
-                        const takeProfitPct = 0.15; // 15% default take profit
+                        // Construct synthetic position using global env settings
+                        const stopLossPct = QUANT_CONFIG.stopLossPct || 0.08;
+                        const takeProfitPct = QUANT_CONFIG.takeProfitPct || 0.15;
 
                         positions[productId] = {
                             productId,

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { createLimitOrder, getOrder, cancelOrder, getProduct } from './client';
+import { createLimitOrder, getOrder, cancelOrder, getProduct, createMarketOrder } from './client';
 import { isSimulationMode, QUANT_CONFIG, formatSizeByIncrement } from './risk-manager';
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
@@ -129,6 +129,25 @@ export async function updateGrid(productId: string, currentPrice: number, atrPct
             saveGrid(grid);
         }
     } else if (order.stage === 'SELLING') {
+        const entryPrice = order.sizeUsd / order.baseQty;
+        // FLASH CRASH PROTECTION
+        if (currentPrice <= entryPrice * (1 - QUANT_CONFIG.stopLossPct)) {
+            console.log(`   🚨 [GRID MAKER] Flash Crash Stop-Loss Hit for ${productId}! Cutting grid bag at -${(QUANT_CONFIG.stopLossPct*100).toFixed(1)}%`);
+            if (!isSim) {
+                try {
+                    await cancelOrder(order.orderId);
+                    const res = await getProduct(productId) as any;
+                    const qtyStr = formatSizeByIncrement(order.baseQty, res.base_increment || '0.0001');
+                    await createMarketOrder(productId, 'SELL', qtyStr);
+                } catch (err: any) {
+                    console.error(`   ⚠️ [GRID MAKER] Failed to market sell grid bag: ${err.message}`);
+                }
+            }
+            delete grid[productId];
+            saveGrid(grid);
+            return;
+        }
+
         let filled = isSim && (currentPrice >= order.price);
         if (!isSim) {
             try {

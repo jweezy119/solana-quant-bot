@@ -115,12 +115,21 @@ async function resolveProducts(configured: string[]): Promise<string[]> {
 }
 
 import { connectWebsocket, getLiveMetrics, updateWebsocketSubscriptions } from './websocket';
+import { fetchTopVolumeProducts } from './scanner';
 
 // ─── MAIN BOT SCAN LOOP ──────────────────────────────────────
 
 async function startCoinbaseBot() {
-  const activeProducts = await resolveProducts(PRODUCTS);
+  let activeProducts = await resolveProducts(PRODUCTS);
   
+  const dynamicLimit = parseInt(process.env.COINBASE_DYNAMIC_WATCHLIST_LIMIT || '0', 10);
+  if (dynamicLimit > 0) {
+      const topProducts = await fetchTopVolumeProducts(dynamicLimit);
+      if (topProducts.length > 0) {
+          activeProducts = topProducts;
+      }
+  }
+
   connectWebsocket(activeProducts); // Start the live stream
 
   console.clear();
@@ -144,6 +153,21 @@ async function startCoinbaseBot() {
 
   const initialCash = await getAvailableCash();
   console.log(`\n💰 Bankroll Active: $${initialCash.toFixed(2)} USD/USDC (Baseline: $${DEFAULT_SIM_CAPITAL.toFixed(2)})`);
+
+  // ── Dynamic Watchlist Scanner Loop ──
+  if (dynamicLimit > 0) {
+    setInterval(async () => {
+      if (!isRunning) return;
+      const topProducts = await fetchTopVolumeProducts(dynamicLimit);
+      if (topProducts.length > 0) {
+        if (topProducts.join(',') !== activeProducts.join(',')) {
+            console.log(`\n🔄 [WATCHLIST] Rotating target list. Now hunting: ${topProducts.length} coins`);
+            activeProducts = topProducts;
+            updateWebsocketSubscriptions(activeProducts);
+        }
+      }
+    }, 10 * 60 * 1000); // Check every 10 minutes
+  }
 
   // ── High-Frequency WebSocket Stop/Target Execution Loop ──
   // This runs entirely decoupled from the slow REST API scan loop to ensure sub-second stop/target execution
@@ -196,8 +220,12 @@ async function startCoinbaseBot() {
         scanResults[productId] = result;
         currentPrices[productId] = result.technical.currentPrice;
       } catch (err: any) {
-        console.error(`  ⚠️ Error scanning ${productId}:`, err.message);
+        if (!err.message.includes('Insufficient candle data')) {
+          console.error(`  ⚠️ Error scanning ${productId}:`, err.message);
+        }
       }
+      // Space out REST requests to respect Coinbase 10 req/sec limit
+      await sleep(333);
     }
 
     // 2. Calculate Total Portfolio Equity, Realized, and Unrealized PnL
@@ -248,24 +276,7 @@ async function startCoinbaseBot() {
       }
     }
 
-    // ─── DYNAMIC ASSET ROTATION (AUTO-HUNTING) ──────────────
-    if (scanCount % 150 === 2) { // Runs roughly every 30 minutes
-      try {
-        const topAssets = await scanTopVolumeAssets(5); // Top 5 high-vol, low-spread assets
-        if (topAssets.length > 0) {
-          // Preserve assets that currently have an open position
-          const openPositionIds = Object.keys(positions);
-          const nextWatchlist = Array.from(new Set([...topAssets, ...openPositionIds]));
-          
-          activeProducts.length = 0;
-          activeProducts.push(...nextWatchlist);
-          updateWebsocketSubscriptions(activeProducts);
-          console.log(`\n🎯 [DYNAMIC ROTATION] Watchlist updated with top volume leaders: [${activeProducts.join(', ')}]`);
-        }
-      } catch (err: any) {
-        console.error('  ⚠️ Rotation scanner error:', err.message);
-      }
-    }
+    // Legacy dynamic rotation block removed in favor of the new Global Scanner
 
     const pSign = totalNetProfitUsd >= 0 ? '+' : '';
     const rSign = metrics.totalRealizedPnl >= 0 ? '+' : '';

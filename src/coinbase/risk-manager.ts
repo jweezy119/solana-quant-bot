@@ -1034,13 +1034,20 @@ export async function checkStopsAndTargets(currentPrices: Record<string, number>
         }
       }
     } else {
-      // Legacy trailing ratchet: at +2.5% gain, move stop to +1.5% (covers fees)
-      const gainPct = (price - pos.entryPrice) / pos.entryPrice;
-      const breakevenStop = pos.entryPrice * (1 + QUANT_CONFIG.trailingLockPct);
-      if (gainPct >= QUANT_CONFIG.trailingTriggerPct && pos.stopLossPrice < breakevenStop) {
-        pos.stopLossPrice = breakevenStop;
-        console.log(`\n🛡️ Trailing Stop Activated for ${productId}: Locked Net Profit Stop at +${(QUANT_CONFIG.trailingLockPct * 100).toFixed(1)}% ($${breakevenStop.toFixed(4)})`);
-        playTransactionSound('trailing');
+      // True dynamic trailing stop for non-runner positions (including manual bags)
+      const hwm = pos.highestPriceSeen || pos.entryPrice;
+      const gainPct = (hwm - pos.entryPrice) / pos.entryPrice;
+      if (gainPct >= QUANT_CONFIG.trailingTriggerPct) {
+        const trailDistancePct = Math.max(0.01, QUANT_CONFIG.trailingTriggerPct - QUANT_CONFIG.trailingLockPct);
+        const trailingFloor = hwm * (1 - trailDistancePct);
+        const minimumLock = pos.entryPrice * (1 + QUANT_CONFIG.trailingLockPct);
+        const newStop = Math.max(pos.stopLossPrice, Math.max(trailingFloor, minimumLock));
+        
+        if (newStop > pos.stopLossPrice) {
+          pos.stopLossPrice = newStop;
+          console.log(`\n🛡️ Trailing Stop Ratcheted for ${productId}: Peak +${(gainPct * 100).toFixed(1)}%, Stop moved to $${newStop.toFixed(4)} (lock +${(((newStop / pos.entryPrice) - 1) * 100).toFixed(1)}%)`);
+          playTransactionSound('trailing');
+        }
       }
     }
 

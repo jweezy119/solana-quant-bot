@@ -214,8 +214,7 @@ async function main() {
         const isSafe = await isTokenSafeRugCheck(candidate.tokenAddress);
         if (!isSafe) {
            console.log(`     ⏭️ Skipping $${candidate.symbol} due to RugCheck safety failure.`);
-           continue;
-        }
+        } else {
 
         if (IS_BEAR_MARKET) console.log(`     🛡️ Bear Market Override: Cleared (Whale Active: ${whaleActive}, Buy Ratio: ${candidate.buyRatio5m}x)`);
         console.log(`     Score: ${candidate.score}/100 │ Buy Ratio: ${candidate.buyRatio5m}x │ 5m Vol: $${candidate.volume5m.toFixed(0)}`);
@@ -262,6 +261,7 @@ async function main() {
           };
           savePositions(positions);
         }
+        } // End of isSafe else block
       }
     }
 

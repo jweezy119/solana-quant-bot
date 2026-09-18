@@ -20,8 +20,9 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Non-root user for security
-RUN groupadd -g 1001 botuser && \
+# Non-root user for security and install procps for healthchecks
+RUN apt-get update && apt-get install -y procps && rm -rf /var/lib/apt/lists/* && \
+    groupadd -g 1001 botuser && \
     useradd -u 1001 -g botuser -s /bin/sh -m botuser
 
 # Install production deps only

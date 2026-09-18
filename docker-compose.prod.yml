@@ -61,6 +61,34 @@ services:
         max-size: "10m"
         max-file: "5"
 
+  # ─── Solana Meme Sniper ───────────────────────────────────
+  meme-bot:
+    build: .
+    container_name: sqb-meme-bot
+    restart: unless-stopped
+    environment:
+      - SERVICE_MODE=meme
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2.0"
+    healthcheck:
+      test: ["CMD", "pgrep", "-x", "node"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
   # ─── Dashboard Server ────────────────────────────────────
   dashboard:
     build: .

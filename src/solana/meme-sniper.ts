@@ -13,6 +13,9 @@ import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import bs58 from 'bs58';
 import { scanTrendingMemeCoins, MemeTokenOpportunity } from '../radar/dexscreener';
 import { scanWhaleActivity, WhaleAlert, getTrackedWallets } from '../radar/whale-tracker';
+import { isTokenSafeRugCheck } from '../radar/rugcheck';
+import { updateAndCalculateOFI, isTapeFlipping, clearOFIState } from '../signals/ofi';
+import { updateHMM, isDistributionRegime, getRegimeString, clearHMMState } from '../signals/hmm';
 import { executeMemeBuy, executeMemeSell } from '../execution/meme-router';
 import { playTransactionSound } from '../coinbase/sound';
 
@@ -38,6 +41,7 @@ const MAX_CONCURRENT_POSITIONS = 3;   // Increased to 3 for higher volume of sho
 const TAKE_PROFIT_PCT = 0.50; // +50% (Let runners run)
 const STOP_LOSS_PCT = 0.20;   // -20% (More breathing room for volatility)
 const TRAILING_TRIGGER_PCT = 0.25; // At +25%, ratchet stop
+const MAX_HOLD_TIME_MINUTES = 10;  // Eject if held too long (slow bleed)
 
 let isRunning = true;
 let scanCount = 0;
@@ -205,6 +209,14 @@ async function main() {
       // High conviction criteria: Score >= threshold, bear safety passed, not already in position
       if (candidate.score >= minScore && isSafeInBear && !positions[candidate.tokenAddress]) {
         console.log(`\n  🚀 HIGH CONVICTION BREAKOUT DETECTED: $${candidate.symbol}`);
+        
+        // --- NEW: RugCheck & Safety Check ---
+        const isSafe = await isTokenSafeRugCheck(candidate.tokenAddress);
+        if (!isSafe) {
+           console.log(`     ⏭️ Skipping $${candidate.symbol} due to RugCheck safety failure.`);
+           continue;
+        }
+
         if (IS_BEAR_MARKET) console.log(`     🛡️ Bear Market Override: Cleared (Whale Active: ${whaleActive}, Buy Ratio: ${candidate.buyRatio5m}x)`);
         console.log(`     Score: ${candidate.score}/100 │ Buy Ratio: ${candidate.buyRatio5m}x │ 5m Vol: $${candidate.volume5m.toFixed(0)}`);
 
@@ -256,8 +268,74 @@ async function main() {
     // 6. Manage Open Positions (Stops & Targets with direct live pricing)
     const currentPositions = loadPositions();
     for (const [mint, pos] of Object.entries(currentPositions)) {
-      const livePrice = heldPrices[mint] || memes.find((m) => m.tokenAddress === mint)?.priceUsd || pos.entryPriceUsd;
+      const currentMemeData = memes.find((m) => m.tokenAddress === mint);
+      const livePrice = heldPrices[mint] || currentMemeData?.priceUsd || pos.entryPriceUsd;
       const gainPct = (livePrice - pos.entryPriceUsd) / pos.entryPriceUsd;
+
+      const timeHeldMs = Date.now() - pos.entryTime;
+      const timeHeldMinutes = timeHeldMs / (1000 * 60);
+
+      // Ejection: Time Limit
+      if (timeHeldMinutes > MAX_HOLD_TIME_MINUTES) {
+        console.log(`\n  ⏰ TIME LIMIT REACHED for $${pos.symbol} (Held > ${MAX_HOLD_TIME_MINUTES.toFixed(1)}m). Exiting to prevent slow bleed!`);
+        if (!pos.simulated) {
+           await executeMemeSell(connection, keypair, mint, pos.tokensHeldRaw, 15);
+        }
+        clearOFIState(mint);
+        clearHMMState(mint);
+        delete currentPositions[mint];
+        savePositions(currentPositions);
+        continue;
+      }
+
+      // Ejection: Chaotic Trading (Velocity) / Dumping
+      if (currentMemeData && (currentMemeData.buys5m + currentMemeData.sells5m > 3000)) {
+         console.log(`\n  🌪️ CHAOTIC VOLUME DETECTED for $${pos.symbol} (>3000 tx in 5m). Ejecting to avoid slippage/dump!`);
+         if (!pos.simulated) {
+           await executeMemeSell(connection, keypair, mint, pos.tokensHeldRaw, 15);
+         }
+         clearOFIState(mint);
+         clearHMMState(mint);
+         delete currentPositions[mint];
+         savePositions(currentPositions);
+         continue;
+      }
+
+      // Calculate Quant Signals (OFI & HMM)
+      let ofiScore = 0;
+      if (currentMemeData) {
+         ofiScore = updateAndCalculateOFI(mint, currentMemeData.buys5m, currentMemeData.sells5m);
+      }
+      const hmmProbs = updateHMM(mint, gainPct, ofiScore);
+      const hmmRegime = getRegimeString(hmmProbs);
+
+      // Quant Ejection 1: OFI Tape Flip
+      if (isTapeFlipping(ofiScore)) {
+         console.log(`\n  🚨 QUANT EJECTION: OFI TAPE FLIP DETECTED on $${pos.symbol} (OFI: ${ofiScore.toFixed(0)}). Whales are unloading!`);
+         if (!pos.simulated) {
+           await executeMemeSell(connection, keypair, mint, pos.tokensHeldRaw, 15);
+         }
+         clearOFIState(mint);
+         clearHMMState(mint);
+         delete currentPositions[mint];
+         savePositions(currentPositions);
+         playTransactionSound('loss');
+         continue;
+      }
+
+      // Quant Ejection 2: HMM Distribution State
+      if (isDistributionRegime(mint)) {
+         console.log(`\n  🚨 QUANT EJECTION: HMM DISTRIBUTION REGIME on $${pos.symbol} (${hmmRegime}). Ejecting instantly!`);
+         if (!pos.simulated) {
+           await executeMemeSell(connection, keypair, mint, pos.tokensHeldRaw, 15);
+         }
+         clearOFIState(mint);
+         clearHMMState(mint);
+         delete currentPositions[mint];
+         savePositions(currentPositions);
+         playTransactionSound('loss');
+         continue;
+      }
 
       // Update trailing high
       if (livePrice > pos.highestPriceSeen) {
@@ -288,6 +366,8 @@ async function main() {
           }
         }
         playTransactionSound('win');
+        clearOFIState(mint);
+        clearHMMState(mint);
         delete currentPositions[mint];
         savePositions(currentPositions);
       }
@@ -303,6 +383,8 @@ async function main() {
           }
         }
         playTransactionSound('loss');
+        clearOFIState(mint);
+        clearHMMState(mint);
         delete currentPositions[mint];
         savePositions(currentPositions);
       }
@@ -322,8 +404,8 @@ async function main() {
       }
     }
 
-    console.log(`\n  ⏳ Next scan in 10s...`);
-    await sleep(10000);
+    console.log(`\n  ⏳ Next scan in 4s...`);
+    await sleep(4000); // Poll aggressively to feed OFI/HMM engines
   }
 }
 

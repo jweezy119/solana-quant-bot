@@ -26,6 +26,10 @@ case "$MODE" in
     echo "  🕸️ Starting Smart Grid Bot..."
     exec node dist/src/coinbase/smart-grid.js
     ;;
+  meme)
+    echo "  🚀 Starting Solana Meme Sniper..."
+    exec node dist/src/solana/meme-sniper.js
+    ;;
   *)
     echo "  ❌ Unknown SERVICE_MODE: $MODE"
     echo "     Valid modes: bot, dashboard, grid"

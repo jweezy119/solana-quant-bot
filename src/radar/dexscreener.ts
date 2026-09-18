@@ -131,6 +131,11 @@ export async function scanTrendingMemeCoins(
       if (buyRatio < (filters.minBuyRatio5m || 1.3)) continue;
       if (filters.maxFdvUsd && fdv > filters.maxFdvUsd) continue;
 
+      // Anti-Spam / Rug Filter: Require at least one social link or website
+      const hasSocials = p.info?.socials && p.info.socials.length > 0;
+      const hasWebsites = p.info?.websites && p.info.websites.length > 0;
+      if (!hasSocials && !hasWebsites) continue;
+
       // Calculate Breakout Score (0 - 100)
       let score = 50;
       if (buyRatio >= 2.5) score += 20;

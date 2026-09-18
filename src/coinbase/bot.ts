@@ -339,7 +339,8 @@ async function startCoinbaseBot() {
     }
 
     // 5. Check Stop-Loss, Take-Profit, Trailing Breakeven, and Time-Decay on held positions
-    // 5. (Moved to High-Frequency WebSocket Loop)
+    // REST API Fallback check for illiquid assets that drop from the WebSocket stream
+    await checkStopsAndTargets(currentPrices, availableCash, totalPortfolioEquity);
 
     // 6. Active Positions Display
     const updatedPositions = loadPositions();

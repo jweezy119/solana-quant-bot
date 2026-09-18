@@ -22,9 +22,13 @@ case "$MODE" in
     echo "  📊 Starting Dashboard Server..."
     exec node dist/src/dashboard/server.js
     ;;
+  grid)
+    echo "  🕸️ Starting Smart Grid Bot..."
+    exec node dist/src/coinbase/smart-grid.js
+    ;;
   *)
     echo "  ❌ Unknown SERVICE_MODE: $MODE"
-    echo "     Valid modes: bot, dashboard"
+    echo "     Valid modes: bot, dashboard, grid"
     exit 1
     ;;
 esac

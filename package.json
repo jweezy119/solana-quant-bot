@@ -33,15 +33,13 @@
     "jose": "^6.2.11",
     "jsonwebtoken": "^9.0.3",
     "openai": "^7.10.0",
-    "ws": "^8.21.3"
+    "ws": "^8.21.3",
+    "@tensorflow/tfjs-node": "^4.20.0"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.14.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.5.2"
-  },
-  "optionalDependencies": {
-    "@tensorflow/tfjs-node": "^4.20.0"
   }
 }

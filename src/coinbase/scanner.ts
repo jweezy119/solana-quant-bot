@@ -15,11 +15,14 @@ export async function fetchTopVolumeProducts(limit: number): Promise<string[]> {
             return [];
         }
 
+        const STABLECOINS = ['USDT', 'USDC', 'DAI', 'PYUSD', 'EURC', 'EUROC', 'CGLD', 'WBTC'];
+        
         // Filter for active USDC pairs
         const usdcPairs = res.products.filter((p: any) => 
             p.quote_currency_id === 'USDC' && 
             p.status === 'online' &&
-            !p.product_id.includes('VENOM') // filter out buggy pairs if needed
+            !p.product_id.includes('VENOM') && // filter out buggy pairs if needed
+            !STABLECOINS.includes(p.base_currency_id)
         );
 
         // Calculate 24h USD volume and sort

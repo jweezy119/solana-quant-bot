@@ -1,5 +1,5 @@
 # ─── Build stage ───────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:20-slim AS builder
 
 WORKDIR /app
 
@@ -16,13 +16,13 @@ COPY index.ts ./
 RUN npx tsc
 
 # ─── Runtime stage ─────────────────────────────────────────
-FROM node:20-alpine
+FROM node:20-slim
 
 WORKDIR /app
 
 # Non-root user for security
-RUN addgroup -g 1001 -S botuser && \
-    adduser -u 1001 -S botuser -G botuser
+RUN groupadd -g 1001 botuser && \
+    useradd -u 1001 -g botuser -s /bin/sh -m botuser
 
 # Install production deps only
 COPY package.json package-lock.json* ./
@@ -30,6 +30,9 @@ RUN npm install --omit=dev --ignore-optional 2>/dev/null || npm install --omit=d
 
 # Copy compiled JS from builder
 COPY --from=builder /app/dist ./dist
+
+# Copy ML model
+COPY src/ml/model ./src/ml/model
 
 # Copy entrypoint script
 COPY scripts/start.sh /app/start.sh

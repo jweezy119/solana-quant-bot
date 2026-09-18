@@ -47,6 +47,7 @@ export interface CoinbasePosition {
   strategy?: 'STANDARD' | 'LISTING_MOMENTUM' | 'VERIFY';
   runnerMode?: boolean;
   maxHoldDurationMs?: number;
+  atrPct?: number;
 }
 
 export interface CoinbaseTradeRecord {
@@ -430,6 +431,25 @@ export function isSimulationMode(): boolean {
   return process.env.COINBASE_SIMULATION !== 'false';
 }
 
+export function getSocialEfficacy(): { winRate: number; multiplier: number } {
+  const journal = loadJournal();
+  const socialTrades = journal.filter(t => t.reason.toLowerCase().includes('social') || t.reason.toLowerCase().includes('twitter'));
+  if (socialTrades.length < 5) return { winRate: 0.5, multiplier: 1.0 };
+
+  let wins = 0;
+  for (const t of socialTrades) {
+    const net = t.netPnlUsd !== undefined ? t.netPnlUsd : t.pnlUsd;
+    if (net > 0) wins++;
+  }
+  
+  const winRate = wins / socialTrades.length;
+  let multiplier = 1.0;
+  if (winRate < 0.40) multiplier = 0.25; // Heavily penalize failing sentiment
+  else if (winRate > 0.60) multiplier = 1.5; // Boost winning sentiment
+  
+  return { winRate, multiplier };
+}
+
 // ─── QUANT KELLY COMPOUNDING SIZER ────────────────────────────
 
 export function calculateCompoundedSize(
@@ -765,6 +785,7 @@ export async function executeAIProposal(
         strategy: strategyTag,
         runnerMode,
         maxHoldDurationMs: proposal.maxHoldDurationMs || (runnerMode ? RUNNER_MAX_HOLD_MS : undefined),
+        atrPct: proposal.atrPct,
       };
       savePositions(positions);
 
@@ -894,51 +915,22 @@ export async function executeAIProposal(
             } catch {}
           }
         } else {
-          // Emergency Stop-Loss: Attempt Limit Maker Sell first to save 1.2% taker fee
-          const limitPriceNum = bestAsk > 0 ? bestAsk * 0.998 : currentPrice * 0.998;
-          const limitPriceStr = formatSizeByIncrement(limitPriceNum, product.quote_increment || '0.0001');
-          console.log(`   🚨 EMERGENCY STOP LOSS: Attempting Limit Sell @ $${limitPriceStr} (6s window)...`);
+          // Emergency Stop-Loss: MUST use Market Sell to guarantee fill during liquidation cascades
+          console.log(`   🚨 EMERGENCY STOP LOSS: Executing IMMEDIATE MARKET SELL to cut losses...`);
           try {
-            const order = (await createLimitOrder(proposal.productId, 'SELL', formattedBaseBal, limitPriceStr, true)) as any;
-            sellOrderId = order.order_id || order.success_response?.order_id;
-            
-            let isFilled = false;
-            for (let attempt = 0; attempt < 3; attempt++) {
-              await new Promise((r) => setTimeout(r, 2000));
-              try {
-                const checkOrder = await getOrder(sellOrderId);
-                if (checkOrder.order?.status === 'FILLED') {
-                  isFilled = true;
-                  exitFeeUsd = parseFloat(checkOrder.order?.total_fees || '0');
-                  const avg = parseFloat(checkOrder.order?.average_filled_price || limitPriceStr);
-                  if (avg > 0) actualExitPrice = avg;
-                  console.log(`   ✅ STOP LIMIT SELL FILLED! Price: $${actualExitPrice.toFixed(4)} │ Fee: $${exitFeeUsd.toFixed(4)} (0.6% Maker)`);
-                  break;
-                }
-              } catch {}
-            }
-            
-            if (!isFilled) {
-              console.log(`   ⏳ Stop Limit not filled. Cancelling and falling back to MARKET SELL...`);
-              await cancelOrder(sellOrderId);
-              throw new Error("Limit timeout");
-            }
-          } catch (err: any) {
-            console.log(`   ⚠️ Limit sell failed (${err.message}). Using market sell fallback...`);
+            const mOrder = (await createMarketOrder(proposal.productId, 'SELL', formattedBaseBal)) as any;
+            sellOrderId = mOrder.order_id || mOrder.success_response?.order_id;
+            await new Promise((r) => setTimeout(r, 1500));
             try {
-              const mOrder = (await createMarketOrder(proposal.productId, 'SELL', formattedBaseBal)) as any;
-              sellOrderId = mOrder.order_id || mOrder.success_response?.order_id;
-              await new Promise((r) => setTimeout(r, 1500));
-              try {
-                const check = await getOrder(sellOrderId);
-                exitFeeUsd = parseFloat(check.order?.total_fees || '0');
-                const avg = parseFloat(check.order?.average_filled_price || currentPrice.toString());
-                if (avg > 0) actualExitPrice = avg;
-              } catch {}
-            } catch (fallbackErr: any) {
-              console.log(`   ❌ LIVE STOP SELL FAILED: ${fallbackErr.message}`);
-              return { success: false, reason: fallbackErr.message };
-            }
+              const check = await getOrder(sellOrderId);
+              exitFeeUsd = parseFloat(check.order?.total_fees || '0');
+              const avg = parseFloat(check.order?.average_filled_price || currentPrice.toString());
+              if (avg > 0) actualExitPrice = avg;
+              console.log(`   ✅ STOP MARKET SELL FILLED! Price: $${actualExitPrice.toFixed(4)} │ Fee: $${exitFeeUsd.toFixed(4)} (Taker)`);
+            } catch {}
+          } catch (fallbackErr: any) {
+            console.log(`   ❌ LIVE STOP SELL FAILED: ${fallbackErr.message}`);
+            return { success: false, reason: fallbackErr.message };
           }
         }
 
@@ -1038,7 +1030,8 @@ export async function checkStopsAndTargets(currentPrices: Record<string, number>
       const hwm = pos.highestPriceSeen || pos.entryPrice;
       const gainPct = (hwm - pos.entryPrice) / pos.entryPrice;
       if (gainPct >= QUANT_CONFIG.trailingTriggerPct) {
-        const trailDistancePct = Math.max(0.01, QUANT_CONFIG.trailingTriggerPct - QUANT_CONFIG.trailingLockPct);
+        const dynamicTrailDistance = pos.atrPct ? (pos.atrPct / 100) * 1.5 : (QUANT_CONFIG.trailingTriggerPct - QUANT_CONFIG.trailingLockPct);
+        const trailDistancePct = Math.max(0.01, Math.min(0.06, dynamicTrailDistance));
         const trailingFloor = hwm * (1 - trailDistancePct);
         const minimumLock = pos.entryPrice * (1 + QUANT_CONFIG.trailingLockPct);
         const newStop = Math.max(pos.stopLossPrice, Math.max(trailingFloor, minimumLock));

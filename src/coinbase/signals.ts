@@ -22,6 +22,7 @@ export interface TechnicalSignal {
   trend: 'UPTREND' | 'DOWNTREND' | 'SIDEWAYS';
   reasoning: string;
   timestamp: number;
+  history: any;
 }
 
 // ─── MATH HELPERS ─────────────────────────────────────────────
@@ -242,5 +243,11 @@ export async function getTechnicalSignal(productId: string): Promise<TechnicalSi
     trend,
     reasoning: reasons.join(' | '),
     timestamp: Date.now(),
+    history: {
+      prices: activeCloses,
+      emaFast,
+      emaSlow,
+      atr
+    }
   };
 }

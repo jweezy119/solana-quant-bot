@@ -9,7 +9,10 @@
 import { TechnicalSignal, getTechnicalSignal } from './signals';
 import { SocialSentiment, getSocialSentiment } from './social-feed';
 import { ArbitrageSignal, checkArbitrage } from './arbitrage';
-import { AIOrderProposal } from './risk-manager';
+import { AIOrderProposal, getSocialEfficacy, QUANT_CONFIG } from './risk-manager';
+import { initMLPredictor, generateMLSignal } from '../signals/ml-predictor';
+
+let mlInitialized = false;
 
 export interface FusedSignalResult {
   proposal: AIOrderProposal;
@@ -41,17 +44,27 @@ export async function fuseSignals(productId: string): Promise<FusedSignalResult>
   // Check arbitrage using the live price
   const arbitrage = await checkArbitrage(productId, tech.currentPrice);
 
+  if (!mlInitialized) {
+    await initMLPredictor();
+    mlInitialized = true;
+  }
+
+  const ofiImbalance = liveMetrics?.imbalance || 0;
+  
+  // Get ML Prediction
+  const mlSignal = generateMLSignal(token, tech.currentPrice, tech.history, false, undefined, 0.5, ofiImbalance);
+
   const reasons: string[] = [];
   let action: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
   let fusedConfidence = 0.5;
 
-  // Weightings updated to include Order Flow Imbalance (OFI)
+  // Weightings updated to include Order Flow Imbalance (OFI) and Dynamic Social Efficacy
   const TECH_WEIGHT = 0.40;
-  const SOCIAL_WEIGHT = 0.20;
+  const socialEfficacy = getSocialEfficacy();
+  const SOCIAL_WEIGHT = 0.20 * socialEfficacy.multiplier;
   const ARB_WEIGHT = 0.20;
   const OFI_WEIGHT = 0.20;
 
-  const ofiImbalance = liveMetrics?.imbalance || 0;
   const isBearRegime = process.env.COINBASE_REGIME !== 'BULL';
 
   // Map directions to numeric scores (-1.0 to +1.0)
@@ -141,6 +154,34 @@ export async function fuseSignals(productId: string): Promise<FusedSignalResult>
     action = 'HOLD';
     fusedConfidence = 0.40;
     reasons.unshift('🛑 WAR PANIC FREEZE: Active geopolitical conflict/escalation headlines — knife-catch frozen');
+  }
+
+  // 12. ATR Volatility Filter (Must move enough to cover fees)
+  const minAtrPct = QUANT_CONFIG.makerFeeRate * 100 * 3.0; // Need 3x the maker fee in volatility
+  if (action === 'BUY' && tech.atrPct < minAtrPct) {
+    action = 'HOLD';
+    fusedConfidence = 0.40;
+    reasons.unshift(`🛑 VOLATILITY FILTER: ATR (${tech.atrPct.toFixed(2)}%) < Minimum required (${minAtrPct.toFixed(2)}%) to clear fees`);
+  }
+
+  // 13. RSI Overbought Filter (Prevent buying the absolute top)
+  if (action === 'BUY' && tech.rsi > 65) {
+    action = 'HOLD';
+    fusedConfidence = 0.40;
+    reasons.unshift(`🛑 OVERBOUGHT FILTER: RSI (${tech.rsi.toFixed(2)}) > 65. Refusing to buy local top.`);
+  }
+
+  // 14. ML Predictor Override
+  if (mlSignal) {
+    if (action === 'BUY' && mlSignal.direction === 'SHORT') {
+      action = 'HOLD';
+      fusedConfidence = 0.40;
+      reasons.unshift(`🛑 ML OVERRIDE: TensorFlow model predicts dump (P_Down: ${mlSignal.metadata.pDown}). Cancelling BUY.`);
+    } else if (action === 'HOLD' && mlSignal.direction === 'LONG' && tech.direction === 'BUY') {
+      action = 'BUY';
+      fusedConfidence = Math.min(1.0, fusedConfidence + 0.2);
+      reasons.unshift(`🤖 ML BOOST: TensorFlow model confirms pump (P_Up: ${mlSignal.metadata.pUp}).`);
+    }
   }
 
   const proposal: AIOrderProposal = {

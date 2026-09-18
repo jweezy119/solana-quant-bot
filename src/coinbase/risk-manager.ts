@@ -48,6 +48,8 @@ export interface CoinbasePosition {
   runnerMode?: boolean;
   maxHoldDurationMs?: number;
   atrPct?: number;
+  partialExitDone?: boolean;
+  originalQuantity?: number;
 }
 
 export interface CoinbaseTradeRecord {
@@ -1092,6 +1094,45 @@ export async function checkStopsAndTargets(currentPrices: Record<string, number>
         price,
         totalEquityUsd
       );
+    }
+    // Partial Profit-Taking: sell 50% at +5% and tighten trailing stop on remainder
+    else if (!pos.partialExitDone) {
+      const partialTriggerPct = 0.05; // +5%
+      const gainPct = (price - pos.entryPrice) / pos.entryPrice;
+      if (gainPct >= partialTriggerPct) {
+        const halfQty = pos.quantity / 2;
+        const grossHalf = (price - pos.entryPrice) * halfQty;
+        console.log(`\n💰 PARTIAL EXIT: Selling 50% of ${productId} at +${(gainPct * 100).toFixed(1)}% (locking ~$${grossHalf.toFixed(2)} profit)`);
+
+        // Store original quantity before halving
+        if (!pos.originalQuantity) pos.originalQuantity = pos.quantity;
+
+        // Execute the partial sell
+        await executeAIProposal(
+          {
+            productId,
+            action: 'SELL',
+            confidence: 0.99,
+            reasoning: `Partial profit-take: sold 50% at +${(gainPct * 100).toFixed(1)}%`,
+          },
+          availableCashUsd,
+          price,
+          totalEquityUsd
+        );
+
+        // If position still exists after partial sell, update it
+        const refreshed = loadPositions();
+        if (refreshed[productId]) {
+          refreshed[productId].partialExitDone = true;
+          // Tighten trailing stop on remaining 50%: lock at breakeven + 1%
+          const newFloor = pos.entryPrice * 1.01;
+          if (newFloor > refreshed[productId].stopLossPrice) {
+            refreshed[productId].stopLossPrice = newFloor;
+            console.log(`   🛡️ Trailing stop tightened to breakeven+1%: $${newFloor.toFixed(4)}`);
+          }
+          savePositions(refreshed);
+        }
+      }
     }
   }
 

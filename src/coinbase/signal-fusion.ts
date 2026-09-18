@@ -11,6 +11,8 @@ import { SocialSentiment, getSocialSentiment } from './social-feed';
 import { ArbitrageSignal, checkArbitrage } from './arbitrage';
 import { AIOrderProposal, getSocialEfficacy, QUANT_CONFIG } from './risk-manager';
 import { initMLPredictor, generateMLSignal } from '../signals/ml-predictor';
+import { getMultiTimeframeConfluence } from '../signals/multi-timeframe';
+import { isBtcCorrelationSafe } from '../signals/btc-correlation';
 
 let mlInitialized = false;
 
@@ -181,6 +183,42 @@ export async function fuseSignals(productId: string): Promise<FusedSignalResult>
       action = 'BUY';
       fusedConfidence = Math.min(1.0, fusedConfidence + 0.2);
       reasons.unshift(`🤖 ML BOOST: TensorFlow model confirms pump (P_Up: ${mlSignal.metadata.pUp}).`);
+    }
+  }
+
+  // 15. BTC Correlation Gate — block alt buys when BTC is dumping
+  if (action === 'BUY') {
+    const btcCheck = await isBtcCorrelationSafe(productId);
+    if (!btcCheck.safe) {
+      action = 'HOLD';
+      fusedConfidence = 0.35;
+      reasons.unshift(`🛑 BTC CORRELATION: ${btcCheck.reason}. Blocking alt BUY.`);
+    }
+  }
+
+  // 16. Multi-Timeframe Confluence — boost or block based on 5m/15m/1h alignment
+  if (action === 'BUY' || action === 'SELL') {
+    try {
+      const mtf = await getMultiTimeframeConfluence(productId);
+      const mtfTag = `📊 MTF: ${mtf.alignedCount}/3 ${mtf.strength} (5m:${mtf.timeframes['5m'].trend} 15m:${mtf.timeframes['15m'].trend} 1h:${mtf.timeframes['1h'].trend})`;
+
+      if (action === 'BUY' && mtf.strength === 'CONFLICTING') {
+        action = 'HOLD';
+        fusedConfidence = 0.40;
+        reasons.unshift(`🛑 ${mtfTag} — Timeframes disagree, blocking BUY.`);
+      } else if (action === 'BUY' && mtf.direction === 'BEARISH') {
+        action = 'HOLD';
+        fusedConfidence = 0.40;
+        reasons.unshift(`🛑 ${mtfTag} — Higher timeframes bearish, blocking BUY.`);
+      } else if (mtf.strength === 'STRONG') {
+        fusedConfidence = Math.min(1.0, fusedConfidence + mtf.confidenceBoost);
+        reasons.push(`✅ ${mtfTag}`);
+      } else {
+        reasons.push(mtfTag);
+      }
+    } catch {
+      // Fail-open: MTF fetch failure should not block trading
+      reasons.push('📊 MTF: unavailable (fail-open)');
     }
   }
 

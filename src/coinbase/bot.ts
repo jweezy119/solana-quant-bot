@@ -28,6 +28,8 @@ import { checkCoinbaseNewListings, evaluateListingMomentum } from '../radar/coin
 import { scanTopVolumeAssets } from '../radar/market-scanner';
 import { updateGrid } from './grid-manager';
 import { syncWalletToPositions } from './wallet-sync';
+import { collectDataPoint, backfillOutcomes } from '../ml/data-collector';
+import { getBtcCorrelationState } from '../signals/btc-correlation';
 
 // ─── CONFIGURATION ───────────────────────────────────────────
 
@@ -331,6 +333,30 @@ async function startCoinbaseBot() {
           await executeAIProposal(proposal, availableCash, technical.currentPrice, totalPortfolioEquity);
         }
 
+        // ─── DATA COLLECTION FOR ML TRAINING ───
+        try {
+          const btcState = await getBtcCorrelationState();
+          collectDataPoint({
+            product: productId.split('-')[0],
+            price: technical.currentPrice,
+            rsi: technical.rsi,
+            ema9: technical.emaFast,
+            ema21: technical.emaSlow,
+            atr: technical.atr,
+            atrPct: technical.atrPct,
+            bbLower: technical.bollingerLower,
+            bbUpper: technical.bollingerUpper,
+            trend: technical.trend,
+            ofi: liveMetrics?.imbalance || 0,
+            arbSpread: arbitrage.spreadPct,
+            socialScore: social.score,
+            btcPrice: btcState.btcPrice,
+            btcRsi: btcState.btcRsi,
+            action: proposal.action,
+            confidence: proposal.confidence,
+          });
+        } catch {}
+
         // ─── GRID MARKET MAKER ───
         await updateGrid(productId, technical.currentPrice, proposal.atrPct, availableCash, !!positions[productId]);
       } catch (err: any) {
@@ -341,6 +367,11 @@ async function startCoinbaseBot() {
     // 5. Check Stop-Loss, Take-Profit, Trailing Breakeven, and Time-Decay on held positions
     // REST API Fallback check for illiquid assets that drop from the WebSocket stream
     await checkStopsAndTargets(currentPrices, availableCash, totalPortfolioEquity);
+
+    // 6. Back-fill ML training outcomes (every scan — lightweight, only writes when data is ready)
+    try {
+      backfillOutcomes(currentPrices);
+    } catch {}
 
     // 6. Active Positions Display
     const updatedPositions = loadPositions();

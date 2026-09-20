@@ -124,9 +124,9 @@ export async function fuseSignals(productId: string): Promise<FusedSignalResult>
     reasons.push(arbitrage.reasoning);
   }
   // 8. High Conviction Technical Setup with neutral sentiment
-  else if (tech.direction === 'BUY' && tech.confidence >= 0.70) {
+  else if (tech.direction === 'BUY' && tech.confidence >= 0.60) {
     action = 'BUY';
-    fusedConfidence = tech.confidence * 0.88;
+    fusedConfidence = tech.confidence * 0.90;
     reasons.push(`📈 Technical Dip/Breakout (${tech.reasoning}) | Social & Arb Neutral`);
   }
   // 9. High Conviction Technical Breakdown
@@ -167,10 +167,10 @@ export async function fuseSignals(productId: string): Promise<FusedSignalResult>
   }
 
   // 13. RSI Overbought Filter (Prevent buying the absolute top)
-  if (action === 'BUY' && tech.rsi > 65) {
+  if (action === 'BUY' && tech.rsi > 72) {
     action = 'HOLD';
     fusedConfidence = 0.40;
-    reasons.unshift(`🛑 OVERBOUGHT FILTER: RSI (${tech.rsi.toFixed(2)}) > 65. Refusing to buy local top.`);
+    reasons.unshift(`🛑 OVERBOUGHT FILTER: RSI (${tech.rsi.toFixed(2)}) > 72. Refusing to buy local top.`);
   }
 
   // 14. ML Predictor Override
@@ -203,9 +203,9 @@ export async function fuseSignals(productId: string): Promise<FusedSignalResult>
       const mtfTag = `📊 MTF: ${mtf.alignedCount}/3 ${mtf.strength} (5m:${mtf.timeframes['5m'].trend} 15m:${mtf.timeframes['15m'].trend} 1h:${mtf.timeframes['1h'].trend})`;
 
       if (action === 'BUY' && mtf.strength === 'CONFLICTING') {
-        action = 'HOLD';
-        fusedConfidence = 0.40;
-        reasons.unshift(`🛑 ${mtfTag} — Timeframes disagree, blocking BUY.`);
+        // Soften block: lower confidence instead of halting, to increase trade frequency
+        fusedConfidence = Math.max(0.65, fusedConfidence - 0.15);
+        reasons.push(`⚠️ ${mtfTag} — Timeframes disagree, but pushing through.`);
       } else if (action === 'BUY' && mtf.direction === 'BEARISH') {
         action = 'HOLD';
         fusedConfidence = 0.40;

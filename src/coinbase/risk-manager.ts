@@ -25,7 +25,7 @@ export interface AIOrderProposal {
   action: 'BUY' | 'SELL' | 'HOLD';
   confidence: number;  // 0.0 to 1.0
   reasoning: string;
-  strategy?: 'STANDARD' | 'LISTING_MOMENTUM';
+  strategy?: string;
   maxHoldDurationMs?: number;
   atrPct?: number;     // Asset's current volatility for dynamic sizing
 }
@@ -44,7 +44,7 @@ export interface CoinbasePosition {
   orderId?: string;
   buyFeeUsd?: number;
   orderType?: 'MAKER' | 'TAKER';
-  strategy?: 'STANDARD' | 'LISTING_MOMENTUM' | 'VERIFY';
+  strategy?: string;
   runnerMode?: boolean;
   maxHoldDurationMs?: number;
   atrPct?: number;

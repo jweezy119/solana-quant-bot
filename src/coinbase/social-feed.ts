@@ -8,6 +8,7 @@
 
 import 'dotenv/config';
 import { pollAlphaRadar } from '../radar/alpha-radar';
+import { analyzeWithJev } from './typesafe-sentiment';
 
 export interface SocialSentiment {
   token: string;              // e.g. "BTC"
@@ -240,9 +241,6 @@ export async function getSocialSentiment(tokenSymbol: string): Promise<SocialSen
 
   // 1. Query real-time Alpha Radar (DexScreener meme momentum + Helius Whale tracker + Coinbase listings)
   const radar = await pollAlphaRadar();
-  if (radar.summary) {
-    sampleHeadlines.push(radar.summary);
-  }
 
   // 2. Try Twitter API if credentials exist
   const twitterResult = await fetchTwitterSentiment(cleanSymbol);
@@ -261,12 +259,42 @@ export async function getSocialSentiment(tokenSymbol: string): Promise<SocialSen
     }
   }
 
-  // Score using NLP Lexicon for macro / war panic check
-  const { score: macroScore, confidence: macroConf, isWarPanicCascade } = scoreSentimentLexicon(collectedTexts);
+  // ─── SENTIMENT SCORING ───────────────────────────────────────
+  // Try TypeSafe Jev first (calibrated AI probabilities), fall back to keyword lexicon
+  let macroScore: number;
+  let macroConf: number;
+  let isWarPanicCascade: boolean;
+  let sentimentSource = 'lexicon';
 
-  // Fuse Alpha Radar (70% weight) with Macro News (30% weight)
-  const combinedScore = isWarPanicCascade ? -0.85 : parseFloat(((radar.score * 0.70) + (macroScore * 0.30)).toFixed(3));
-  const combinedConf = parseFloat(((radar.confidence * 0.70) + (macroConf * 0.30)).toFixed(2));
+  const jevResult = await analyzeWithJev(cleanSymbol, collectedTexts);
+
+  if (jevResult && jevResult.usedJev) {
+    // TypeSafe Jev delivered calibrated probabilities
+    macroScore = jevResult.score;
+    macroConf = jevResult.confidence;
+    isWarPanicCascade = jevResult.isWarPanic || jevResult.isRegulatoryScare;
+    sentimentSource = 'jev';
+
+    if (jevResult.isWarPanic) {
+      sampleHeadlines.unshift(`🛡️ [Jev] War/Conflict panic detected (P=${(jevResult.warPanicProb * 100).toFixed(0)}%)`);
+    }
+    if (jevResult.isRegulatoryScare) {
+      sampleHeadlines.unshift(`⚖️ [Jev] Regulatory/Hack scare detected (P=${(jevResult.regulatoryScareProb * 100).toFixed(0)}%)`);
+    }
+  } else {
+    // Fallback: keyword lexicon
+    const lexicon = scoreSentimentLexicon(collectedTexts);
+    macroScore = lexicon.score;
+    macroConf = lexicon.confidence;
+    isWarPanicCascade = lexicon.isWarPanicCascade;
+  }
+
+  // Fuse Alpha Radar (60% weight) with Macro/Jev sentiment (40% weight)
+  // Jev gets higher macro weight than the old lexicon because its signal is calibrated
+  const macroWeight = sentimentSource === 'jev' ? 0.40 : 0.30;
+  const radarWeight = 1.0 - macroWeight;
+  const combinedScore = isWarPanicCascade ? -0.85 : parseFloat(((radar.score * radarWeight) + (macroScore * macroWeight)).toFixed(3));
+  const combinedConf = parseFloat(((radar.confidence * radarWeight) + (macroConf * macroWeight)).toFixed(2));
 
   let direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL' = 'NEUTRAL';
   if (combinedScore >= 0.15) {
@@ -282,7 +310,7 @@ export async function getSocialSentiment(tokenSymbol: string): Promise<SocialSen
     buzzCount: collectedTexts.length + radar.activeMemeCount,
     direction,
     sampleHeadlines,
-    source,
+    source: sentimentSource === 'jev' ? 'hybrid' : source,
     lastUpdated: now,
     isWarPanicCascade,
   };

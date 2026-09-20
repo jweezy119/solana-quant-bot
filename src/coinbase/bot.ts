@@ -14,6 +14,8 @@
 
 import 'dotenv/config';
 import { fuseSignals } from './signal-fusion';
+import { StatArbStrategy } from '../strategies/stat-arb';
+import { MeanReversionStrategy } from '../strategies/mean-reversion';
 import {
   executeAIProposal,
   checkStopsAndTargets,
@@ -137,7 +139,9 @@ async function startCoinbaseBot() {
   console.clear();
   console.log('═══════════════════════════════════════════════════════════════════════════════');
   console.log('  🤖  COINBASE ADVANCED QUANT COMPOUNDING & ARBITRAGE BOT — GOD MODE');
-  console.log('  🛡️  Regime: 🔴 BEAR SNIPER MODE (Capitulation Harvesting & Cash Defense)');
+  const isBear = process.env.COINBASE_REGIME !== 'BULL';
+  const regimeStr = isBear ? '🔴 BEAR SNIPER MODE (Capitulation Harvesting & Cash Defense)' : '🟢 BULL MODE (Aggressive Trend Following & Momentum)';
+  console.log(`  🛡️  Regime: ${regimeStr}`);
   console.log('  💰  Fee-Zero Maker Family Only: books that pay fees are banned; new books trade dust until proven');
   console.log('  🔬  Dust-Verify Loop: no Kelly edge ⇒ $5 dust re-proves the family instead of freezing');
   console.log(`  🚀  Runner Mode: zero-fee family winners trail the peak instead of sniping micro-premiums`);
@@ -216,9 +220,33 @@ async function startCoinbaseBot() {
 
     // 1. Scan and compute current market prices for all products
     const scanResults: Record<string, any> = {};
+    
+    // Initialize Strategy Engine
+    const statArb = new StatArbStrategy();
+    const meanRev = new MeanReversionStrategy();
+
     for (const productId of activeProducts) {
       try {
         const result = await fuseSignals(productId);
+        
+        // Run advanced algorithmic strategies
+        const extProposals = await Promise.all([
+          statArb.evaluate(productId),
+          meanRev.evaluate(productId)
+        ]);
+
+        // Strategy Router: Pick the highest confidence actionable proposal
+        let bestProposal = result.proposal;
+        // Default the legacy signal fusion strategy name if not set
+        if (!bestProposal.strategy) bestProposal.strategy = 'MULTI_FACTOR';
+
+        for (const p of extProposals) {
+          if (p && p.action !== 'HOLD' && p.confidence > bestProposal.confidence) {
+            bestProposal = p;
+          }
+        }
+        result.proposal = bestProposal;
+
         scanResults[productId] = result;
         currentPrices[productId] = result.technical.currentPrice;
       } catch (err: any) {
@@ -318,9 +346,9 @@ async function startCoinbaseBot() {
         const padOfi = ofiStr.padEnd(12);
 
         const padAction = proposal.action === 'BUY'
-          ? `🟢 BUY (${(proposal.confidence * 100).toFixed(0)}%)`
+          ? `🟢 BUY (${(proposal.confidence * 100).toFixed(0)}%) [${proposal.strategy || 'MF'}]`
           : proposal.action === 'SELL'
-          ? `🔴 SELL (${(proposal.confidence * 100).toFixed(0)}%)`
+          ? `🔴 SELL (${(proposal.confidence * 100).toFixed(0)}%) [${proposal.strategy || 'MF'}]`
           : `⚪ HOLD`;
 
         console.log(`  ${padProd} ${padPrice} ${padRsi} ${padTrend} │ ${padArb} │ ${padOfi} │ ${padAction}`);

@@ -315,16 +315,16 @@ export const QUANT_CONFIG = {
   minTradeUsd: parseFloat(process.env.COINBASE_MIN_TRADE_USD || '10.00'),
   maxPositionPct: IS_BEAR_SNIPER 
     ? parseFloat(process.env.COINBASE_BEAR_MAX_POS_PCT || '0.20')
-    : parseFloat(process.env.COINBASE_BULL_MAX_POS_PCT || '0.25'),
+    : parseFloat(process.env.COINBASE_BULL_MAX_POS_PCT || '0.30'),
   maxConcurrentPositions: IS_BEAR_SNIPER
     ? parseInt(process.env.COINBASE_BEAR_MAX_POS || '3')
-    : parseInt(process.env.COINBASE_BULL_MAX_POS || '4'),
+    : parseInt(process.env.COINBASE_BULL_MAX_POS || '5'),
   minCashReserveUsd: IS_BEAR_SNIPER
     ? parseFloat(process.env.COINBASE_BEAR_MIN_CASH || '10.00')
     : parseFloat(process.env.COINBASE_BULL_MIN_CASH || '5.00'),
   minConfidenceThreshold: IS_BEAR_SNIPER
     ? parseFloat(process.env.COINBASE_BEAR_MIN_CONF || '0.70')
-    : parseFloat(process.env.COINBASE_BULL_MIN_CONF || '0.65'),
+    : parseFloat(process.env.COINBASE_BULL_MIN_CONF || '0.60'),
   stopLossPct: parseFloat(process.env.COINBASE_STOP_LOSS_PCT || '0.035'),
   takeProfitPct: parseFloat(process.env.COINBASE_TAKE_PROFIT_PCT || '0.055'),
   trailingTriggerPct: parseFloat(process.env.COINBASE_TRAILING_TRIGGER_PCT || '0.035'),

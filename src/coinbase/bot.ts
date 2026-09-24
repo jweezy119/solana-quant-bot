@@ -16,6 +16,8 @@ import 'dotenv/config';
 import { fuseSignals } from './signal-fusion';
 import { StatArbStrategy } from '../strategies/stat-arb';
 import { MeanReversionStrategy } from '../strategies/mean-reversion';
+import { LiquidationSniperStrategy } from '../strategies/liquidation-sniper';
+import { MomentumStrategy } from '../strategies/momentum';
 import {
   executeAIProposal,
   checkStopsAndTargets,
@@ -23,6 +25,7 @@ import {
   isSimulationMode,
   QUANT_CONFIG,
   getPerformanceMetrics,
+  triggerMacroLiquidation,
 } from './risk-manager';
 import { getAccountBalance } from './client';
 import { pollAlphaRadar, getAlphaRadarState } from '../radar/alpha-radar';
@@ -220,19 +223,25 @@ async function startCoinbaseBot() {
 
     // 1. Scan and compute current market prices for all products
     const scanResults: Record<string, any> = {};
+    let macroCrashDetected = false;
+    let crashReason = '';
     
     // Initialize Strategy Engine
     const statArb = new StatArbStrategy();
     const meanRev = new MeanReversionStrategy();
+    const liqSniper = new LiquidationSniperStrategy();
+    const momentum = new MomentumStrategy();
 
     for (const productId of activeProducts) {
       try {
-        const result = await fuseSignals(productId);
+        const result = await fuseSignals(productId); 
         
         // Run advanced algorithmic strategies
         const extProposals = await Promise.all([
           statArb.evaluate(productId),
-          meanRev.evaluate(productId)
+          meanRev.evaluate(productId),
+          liqSniper.evaluate(productId),
+          momentum.evaluate(productId)
         ]);
 
         // Strategy Router: Pick the highest confidence actionable proposal
@@ -245,7 +254,40 @@ async function startCoinbaseBot() {
             bestProposal = p;
           }
         }
+
+        // 🌊 ORDER FLOW IMBALANCE (OFI) FRONT-RUNNER & SHIELD 🌊
+        // Hijacks the final proposal if massive whale activity is detected on the L2 orderbook
+        const liveStats = getLiveMetrics(productId);
+        const ofi = liveStats?.imbalance || 0;
+        
+        if (ofi > 0.65) { // 65%+ Buyer Dominance (Front-Run)
+           if (bestProposal.action !== 'BUY' || bestProposal.confidence < 0.85) {
+               bestProposal = {
+                   productId: productId,
+                   action: 'BUY',
+                   confidence: 0.90, // High confidence front-run override
+                   reasoning: `[OFI_SNIPER] Front-running massive L2 buy wall (OFI: +${(ofi*100).toFixed(1)}%). Whale accumulation detected!`,
+                   strategy: 'OFI_WHALE_SNIPER'
+               };
+           }
+        } else if (ofi < -0.65) { // 65%+ Seller Dominance (Shield)
+           if (bestProposal.action === 'BUY') {
+               bestProposal = {
+                   productId: productId,
+                   action: 'HOLD',
+                   confidence: 1.0,
+                   reasoning: `[OFI_SHIELD] Blocked algorithm Buy: Heavy L2 Sell Wall Detected (OFI: ${(ofi*100).toFixed(1)}%). Dodging dump!`,
+                   strategy: 'OFI_SHIELD'
+               };
+           }
+        }
+
         result.proposal = bestProposal;
+
+        if (result.social.isWarPanicCascade && !macroCrashDetected) {
+          macroCrashDetected = true;
+          crashReason = result.social.sampleHeadlines[0] || 'Systemic Jev Panic Detected';
+        }
 
         scanResults[productId] = result;
         currentPrices[productId] = result.technical.currentPrice;
@@ -327,7 +369,11 @@ async function startCoinbaseBot() {
     console.log(`  ─────────────────────────────────────────────────────────────────────────────`);
 
     // 4. Process Product Signals and Execute Actions
-    for (const productId of activeProducts) {
+    if (macroCrashDetected) {
+       await triggerMacroLiquidation(currentPrices, crashReason);
+       console.log(`\n  🛑 [GOD-MODE] Halting normal entries for this scan due to Macro Liquidation.`);
+    } else {
+      for (const productId of activeProducts) {
       try {
         const result = scanResults[productId];
         if (!result) continue; // Skip if scan failed earlier
@@ -390,6 +436,7 @@ async function startCoinbaseBot() {
       } catch (err: any) {
         console.error(`  ⚠️ Error processing ${productId}:`, err.message);
       }
+    } // End of macroCrashDetected else block
     }
 
     // 5. Check Stop-Loss, Take-Profit, Trailing Breakeven, and Time-Decay on held positions

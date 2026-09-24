@@ -34,6 +34,7 @@ export async function executeMemeBuy(
   // Strategy A: If Pump.fun token, try PumpPortal first
   if (isPumpToken) {
     try {
+      const dynamicPriorityFee = Math.min(0.003, solAmount * 0.015); // Max 1.5% of trade size, capped at 0.003 SOL
       const res = await fetch('https://pumpportal.fun/api/trade-local', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -44,7 +45,7 @@ export async function executeMemeBuy(
           amount: solAmount,
           denominatedInSol: 'true',
           slippage: slippagePct,
-          priorityFee: 0.003, // Jito/MEV bribing loophole: Pay $0.40 to guarantee block 0 entry ahead of retail
+          priorityFee: Math.max(0.0001, dynamicPriorityFee), // Minimum 0.0001 SOL bribe
           pool: 'auto',
         }),
         signal: AbortSignal.timeout(6000),
@@ -99,6 +100,7 @@ export async function executeMemeSell(
   // Strategy A: Try PumpPortal 100% sell
   if (isPumpToken) {
     try {
+      // For selling, we assume roughly the same dynamic fee as entry to avoid eating the bankroll
       const res = await fetch('https://pumpportal.fun/api/trade-local', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -109,7 +111,7 @@ export async function executeMemeSell(
           amount: '100%',
           denominatedInSol: 'false',
           slippage: slippagePct,
-          priorityFee: 0.003, // Flash exit bribe to beat dumps
+          priorityFee: 0.0002, // Lower flash exit bribe for micro-accounts
           pool: 'auto',
         }),
         signal: AbortSignal.timeout(6000),

@@ -18,6 +18,9 @@ import { updateAndCalculateOFI, isTapeFlipping, clearOFIState } from '../signals
 import { updateHMM, isDistributionRegime, getRegimeString, clearHMMState } from '../signals/hmm';
 import { executeMemeBuy, executeMemeSell } from '../execution/meme-router';
 import { playTransactionSound } from '../coinbase/sound';
+import { analyzeNarrativeWithJev } from './typesafe-narrative';
+import { analyzeSybilClustering } from './typesafe-sybil';
+import { autoAdjustStrategy, sweepProfitsToCoinbase } from '../manager/capital-router';
 
 export interface SolanaMemePosition {
   tokenAddress: string;
@@ -37,9 +40,6 @@ const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 const POSITIONS_FILE = path.join(DATA_DIR, 'solana-meme-positions.json');
 
 const SIMULATION_MODE = process.env.MEME_SNIPER_SIMULATION !== 'false';
-const MAX_CONCURRENT_POSITIONS = 3;   // Increased to 3 for higher volume of shots
-const TAKE_PROFIT_PCT = 0.50; // +50% (Let runners run)
-const STOP_LOSS_PCT = 0.20;   // -20% (More breathing room for volatility)
 const TRAILING_TRIGGER_PCT = 0.25; // At +25%, ratchet stop
 const MAX_HOLD_TIME_MINUTES = 10;  // Eject if held too long (slow bleed)
 
@@ -134,8 +134,8 @@ async function main() {
   console.log('  ⚡  Engine: DexScreener Viral Momentum + Helius Whale Radar + PumpPortal / Jupiter');
   console.log(`  💼  Mode: ${SIMULATION_MODE ? '🟡 SIMULATION (Paper Trading)' : '🔴 LIVE ON-CHAIN (Real SOL Execution)'}`);
   console.log(`  🔑  Wallet: ${keypair.publicKey.toBase58()}`);
-  console.log(`  📐  Trade Size: Dynamic (20% of Bankroll) │ Max Positions: ${MAX_CONCURRENT_POSITIONS}`);
-  console.log(`  🎯  Targets: +${(TAKE_PROFIT_PCT * 100)}% Take Profit │ -${(STOP_LOSS_PCT * 100)}% Stop Loss`);
+  console.log(`  📐  Trade Size: Auto-Adjusting │ Max Positions: Dynamic`);
+  console.log(`  🎯  Targets: Auto-Adjusting (Survival/Standard/Aggressive Modes)`);
   console.log(`  🐋  Tracked Smart Money: ${getTrackedWallets().length} Wallets (Helius Stream)`);
   console.log('═══════════════════════════════════════════════════════════════════════════════');
 
@@ -150,16 +150,23 @@ async function main() {
     } catch {}
 
     const positions = loadPositions();
-    const dynamicTradeSol = Math.max(0.015, parseFloat((solBal * 0.20).toFixed(4)));
     const openMints = Object.keys(positions);
     const openCount = openMints.length;
 
+    // --- AUTO-ADJUST STRATEGY GEARS & SWEEP PROFITS ---
+    if (!SIMULATION_MODE) {
+      await sweepProfitsToCoinbase(solBal, keypair, connection);
+    }
+    const strategy = autoAdjustStrategy(solBal);
+
     const IS_BEAR_MARKET = process.env.COINBASE_REGIME !== 'BULL';
-    const activeMaxPositions = IS_BEAR_MARKET ? 1 : MAX_CONCURRENT_POSITIONS;
+    const activeMaxPositions = IS_BEAR_MARKET ? 1 : strategy.maxConcurrentPositions;
 
     console.log(`\n─── Solana Scan #${scanCount}  [${timestamp}] ───────────────────────────────────────────`);
     if (IS_BEAR_MARKET) {
       console.log(`  🛡️  DOWNTREND DETECTED: Operating in BEAR_SNIPER Mode (Max Positions: 1, Strict Whale/Score Requirements)`);
+    } else {
+      console.log(`  ⚙️  STRATEGY MODE: [${strategy.mode}] │ TP: +${(strategy.takeProfitPct*100).toFixed(0)}% │ SL: -${(strategy.stopLossPct*100).toFixed(0)}%`);
     }
     console.log(`  💰 SOL Balance: ${solBal.toFixed(4)} SOL (~$${(solBal * 140).toFixed(2)}) │ Open Positions: ${openCount}/${activeMaxPositions}`);
 
@@ -215,25 +222,64 @@ async function main() {
         if (!isSafe) {
            console.log(`     ⏭️ Skipping $${candidate.symbol} due to RugCheck safety failure.`);
         } else {
+          
+          console.log(`     🧠 Initiating TypeSafe Jev Narrative Analysis...`);
+          const narrative = await analyzeNarrativeWithJev(
+            candidate.symbol, 
+            candidate.description || '', 
+            candidate.socialsString || ''
+          );
+          
+          if (narrative) {
+             console.log(`     🤖 Jev Narrative Score: ${narrative.cultScore.toFixed(1)}/4.0 │ Rug Prob: ${(narrative.rugProbability * 100).toFixed(0)}% │ Community: ${(narrative.establishedCommunityProb * 100).toFixed(0)}%`);
+             
+             if (narrative.rugProbability > 0.6) {
+               console.log(`     ⏭️ Skipping $${candidate.symbol} — Jev flagged as probable low-effort / generic rug.`);
+               continue; // Skip this token
+             }
+             if (narrative.cultScore < 2.5) {
+               console.log(`     ⏭️ Skipping $${candidate.symbol} — Jev cult potential too low (${narrative.cultScore.toFixed(1)} < 2.5). Waiting for stronger narrative.`);
+               continue; // Skip this token
+             }
+             console.log(`     🔥 Jev Narrative Approved! Analyzing On-Chain Sybil Clustering...`);
+             
+             // --- NEW: Sybil Wallet Clustering Check ---
+             const sybilResult = await analyzeSybilClustering(connection, candidate.tokenAddress);
+             if (sybilResult) {
+                console.log(`     🕵️ Jev Sybil Analysis │ Malicious Cluster Prob: ${(sybilResult.sybilProbability * 100).toFixed(0)}%`);
+                if (sybilResult.isSybilCluster) {
+                   console.log(`     ⏭️ Skipping $${candidate.symbol} — Jev detected high probability of dev Sybil wallet clustering (supply split to dump).`);
+                   continue;
+                }
+                console.log(`     ✅ Supply Distribution looks organic.`);
+             } else {
+                console.log(`     ⚠️ Jev Sybil Analysis failed. Proceeding with caution.`);
+             }
+             
+          } else {
+             console.log(`     ⚠️ Jev Narrative Analysis failed. Proceeding with mechanical score only.`);
+          }
 
         if (IS_BEAR_MARKET) console.log(`     🛡️ Bear Market Override: Cleared (Whale Active: ${whaleActive}, Buy Ratio: ${candidate.buyRatio5m}x)`);
         console.log(`     Score: ${candidate.score}/100 │ Buy Ratio: ${candidate.buyRatio5m}x │ 5m Vol: $${candidate.volume5m.toFixed(0)}`);
 
-        if (solBal < dynamicTradeSol + 0.008) {
-          console.log(`     ⚠️ Insufficient SOL (${solBal.toFixed(4)} SOL) to trade ${dynamicTradeSol} SOL + gas reserve.`);
+        if (solBal < strategy.tradeSizingSol + 0.008) {
+          console.log(`     ⚠️ Insufficient SOL (${solBal.toFixed(4)} SOL) to trade ${strategy.tradeSizingSol.toFixed(4)} SOL + gas reserve.`);
+        } else if (strategy.mode === 'HALTED') {
+          console.log(`     ⛔ Trading HALTED: Bankroll critically low.`);
         } else {
-          console.log(`     ⚡ Executing entry for ${dynamicTradeSol} SOL [${SIMULATION_MODE ? 'SIMULATION' : 'LIVE ON-CHAIN'}]...`);
+          console.log(`     ⚡ Executing entry for ${strategy.tradeSizingSol.toFixed(4)} SOL [${SIMULATION_MODE ? 'SIMULATION' : 'LIVE ON-CHAIN'}]...`);
 
           let tokensReceived = 0;
           let signature = `paper-${Date.now()}`;
 
           if (!SIMULATION_MODE) {
-            const tradeRes = await executeMemeBuy(connection, keypair, candidate.tokenAddress, dynamicTradeSol, 15);
+            const tradeRes = await executeMemeBuy(connection, keypair, candidate.tokenAddress, strategy.tradeSizingSol, 15);
             if (tradeRes.success) {
               signature = tradeRes.signature;
               await sleep(2500);
               const onChainBal = await fetchOnChainTokenBalance(connection, keypair.publicKey, new PublicKey(candidate.tokenAddress));
-            tokensReceived = onChainBal > 0 ? onChainBal : ((dynamicTradeSol * 140) / candidate.priceUsd);
+            tokensReceived = onChainBal > 0 ? onChainBal : ((strategy.tradeSizingSol * 140) / candidate.priceUsd);
               console.log(`     ✅ LIVE BUY Confirmed via ${tradeRes.source}! Tx: https://solscan.io/tx/${signature}`);
               playTransactionSound('buy');
             } else {
@@ -241,7 +287,7 @@ async function main() {
               continue;
             }
           } else {
-            tokensReceived = (dynamicTradeSol * 140) / candidate.priceUsd;
+            tokensReceived = (strategy.tradeSizingSol * 140) / candidate.priceUsd;
             console.log(`     📝 Paper Trade Logged (Simulation Mode).`);
             playTransactionSound('buy');
           }
@@ -250,11 +296,11 @@ async function main() {
             tokenAddress: candidate.tokenAddress,
             symbol: candidate.symbol,
             entryPriceUsd: candidate.priceUsd,
-            entrySolSpent: dynamicTradeSol,
+            entrySolSpent: strategy.tradeSizingSol,
             tokensHeldRaw: tokensReceived,
             entryTime: Date.now(),
-            stopLossPrice: candidate.priceUsd * (1 - STOP_LOSS_PCT),
-            takeProfitPrice: candidate.priceUsd * (1 + TAKE_PROFIT_PCT),
+            stopLossPrice: candidate.priceUsd * (1 - strategy.stopLossPct),
+            takeProfitPrice: candidate.priceUsd * (1 + strategy.takeProfitPct),
             highestPriceSeen: candidate.priceUsd,
             simulated: SIMULATION_MODE,
             signature,
@@ -341,8 +387,8 @@ async function main() {
       if (livePrice > pos.highestPriceSeen) {
         pos.highestPriceSeen = livePrice;
         if (gainPct >= TRAILING_TRIGGER_PCT) {
-          // Trail the highest price seen by the stop-loss distance, but ensure it never drops below breakeven+5%
-          const newStop = pos.highestPriceSeen * (1 - STOP_LOSS_PCT);
+          // Trail the highest price seen by the dynamic stop-loss distance
+          const newStop = pos.highestPriceSeen * (1 - (strategy.stopLossPct || 0.20));
           const breakeven = pos.entryPriceUsd * 1.05;
           const targetStop = Math.max(newStop, breakeven);
           

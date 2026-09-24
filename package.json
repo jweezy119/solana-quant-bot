@@ -34,6 +34,7 @@
     "dotenv": "^17.4.2",
     "jose": "^6.2.11",
     "jsonwebtoken": "^9.0.3",
+    "ml-random-forest": "^2.1.0",
     "openai": "^7.10.0",
     "ws": "^8.21.3"
   },

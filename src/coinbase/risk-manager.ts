@@ -50,6 +50,7 @@ export interface CoinbasePosition {
   atrPct?: number;
   partialExitDone?: boolean;
   originalQuantity?: number;
+  dcaCount?: number;
 }
 
 export interface CoinbaseTradeRecord {
@@ -560,8 +561,18 @@ export async function executeAIProposal(
       }
 
       if (positions[proposal.productId]) {
-        console.log(`   ℹ️ Already holding active position in ${proposal.productId}. Skipping additional entry.`);
-        return { success: false, reason: 'Already in position' };
+        const existing = positions[proposal.productId];
+        const drawdownPct = (existing.entryPrice - currentPrice) / existing.entryPrice;
+        
+        // 🧬 SMART DCA (Dynamic Averaging Down)
+        // If underwater by > 4.5% and proposal is a high conviction buy, average down once!
+        if (drawdownPct > 0.045 && proposal.confidence >= 0.85 && !existing.dcaCount) {
+          console.log(`   🧬 [SMART DCA TRIGGERED] ${proposal.productId} is down ${(drawdownPct*100).toFixed(1)}%. Averaging down to rescue position!`);
+          // Let it proceed to buy. We will merge the math when saving the position.
+        } else {
+          console.log(`   ℹ️ Already holding active position in ${proposal.productId}. Skipping additional entry.`);
+          return { success: false, reason: 'Already in position' };
+        }
       }
 
       // Stop-loss re-entry cooldown — prevent death-spiral cascades (e.g. TROLL 8x stop-outs)
@@ -770,25 +781,46 @@ export async function executeAIProposal(
       // Play Transaction Sound chime
       playTransactionSound('buy');
 
-      positions[proposal.productId] = {
-        productId: proposal.productId,
-        baseCurrency,
-        entryPrice: actualEntryPrice,
-        sizeUsd: finalTradeUsd,
-        quantity: actualQuantity,
-        entryTime: Date.now(),
-        stopLossPrice: stopLoss,
-        takeProfitPrice: takeProfit,
-        highestPriceSeen: actualEntryPrice,
-        simulated: isSim,
-        orderId,
-        buyFeeUsd,
-        orderType: 'MAKER',
-        strategy: strategyTag,
-        runnerMode,
-        maxHoldDurationMs: proposal.maxHoldDurationMs || (runnerMode ? RUNNER_MAX_HOLD_MS : undefined),
-        atrPct: proposal.atrPct,
-      };
+      const existing = positions[proposal.productId];
+      if (existing) {
+        // Merge the DCA chunk into the existing bag
+        const mergedQty = existing.quantity + actualQuantity;
+        const mergedEntry = ((existing.entryPrice * existing.quantity) + (actualEntryPrice * actualQuantity)) / mergedQty;
+        const mergedSize = existing.sizeUsd + finalTradeUsd;
+        
+        positions[proposal.productId] = {
+          ...existing,
+          entryPrice: mergedEntry,
+          sizeUsd: mergedSize,
+          quantity: mergedQty,
+          stopLossPrice: mergedEntry * (1 - finalStopPct),
+          takeProfitPrice: mergedEntry * (1 + finalTpPct),
+          highestPriceSeen: Math.max(existing.highestPriceSeen, mergedEntry),
+          dcaCount: (existing.dcaCount || 0) + 1
+        };
+        console.log(`   🧬 [DCA SUCCESS] Merged bag! New Avg Cost: ${formatP(mergedEntry)} │ Total Size: $${mergedSize.toFixed(2)}`);
+      } else {
+        positions[proposal.productId] = {
+          productId: proposal.productId,
+          baseCurrency,
+          entryPrice: actualEntryPrice,
+          sizeUsd: finalTradeUsd,
+          quantity: actualQuantity,
+          entryTime: Date.now(),
+          stopLossPrice: stopLoss,
+          takeProfitPrice: takeProfit,
+          highestPriceSeen: actualEntryPrice,
+          simulated: isSim,
+          orderId,
+          buyFeeUsd,
+          orderType: 'MAKER',
+          strategy: strategyTag,
+          runnerMode,
+          maxHoldDurationMs: proposal.maxHoldDurationMs || (runnerMode ? RUNNER_MAX_HOLD_MS : undefined),
+          atrPct: proposal.atrPct,
+          dcaCount: 0
+        };
+      }
       savePositions(positions);
 
       return { success: true, simulated: isSim, size: finalTradeUsd, orderId };
@@ -809,6 +841,7 @@ export async function executeAIProposal(
       // rotations may pass once the hold window is exceeded by a 60m grace period
       // (releasing stuck cash beats paying fees to sit flat).
       const isStopLoss = proposal.reasoning.toLowerCase().includes('stop-loss');
+      const isLiquidation = proposal.reasoning.toLowerCase().includes('liquidation');
       const roundTripFeePct =
         existing.sizeUsd > 0
           ? ((existing.buyFeeUsd || 0) + existing.sizeUsd * QUANT_CONFIG.makerFeeRate) / existing.sizeUsd
@@ -822,7 +855,7 @@ export async function executeAIProposal(
       const holdGraceElapsed =
         isListing && Date.now() - existing.entryTime > (existing.maxHoldDurationMs || 0) + 60 * 60 * 1000;
 
-      if (!isStopLoss && grossGainPct < feeHurdlePct && !holdGraceElapsed) {
+      if (!isStopLoss && !isLiquidation && grossGainPct < feeHurdlePct && !holdGraceElapsed) {
         const now = Date.now();
         if (now - (LAST_HOLD_LOG_TS[proposal.productId] || 0) > 60_000) {
           console.log(`   ⛔ FEE-HURDLE HOLD: Gross +${grossGainPct.toFixed(2)}% < ${feeHurdlePct.toFixed(2)}% round-trip fee hurdle. Holding for target.`);
@@ -1140,3 +1173,48 @@ export async function checkStopsAndTargets(currentPrices: Record<string, number>
     savePositions(positions);
   }
 }
+
+let macroLiquidationCooldown = 0;
+
+/**
+ * Triggers an emergency portfolio-wide liquidation if Jev detects a systemic macro crash.
+ * Implements Option B "Hybrid Escape" logic: attempts Maker Limit sell for 10s, then falls back to Market.
+ */
+export async function triggerMacroLiquidation(
+  currentPrices: Record<string, number>,
+  reason: string
+) {
+  const now = Date.now();
+  if (now < macroLiquidationCooldown) return; // Prevent spam
+
+  const positions = loadPositions();
+  const activeProducts = Object.keys(positions);
+  
+  if (activeProducts.length === 0) return;
+
+  console.log(`\n🚨🚨 GOD-MODE LIQUIDATION TRIGGERED: ${reason} 🚨🚨`);
+  console.log(`   Initiating HYBRID ESCAPE for ${activeProducts.length} positions to preserve capital...`);
+
+  // We set a 4-hour cooldown so the bot stays in USDC and doesn't re-enter immediately
+  macroLiquidationCooldown = now + 4 * 60 * 60 * 1000;
+
+  for (const productId of activeProducts) {
+    const pos = positions[productId];
+    const currentPrice = currentPrices[productId] || pos.entryPrice;
+    
+    console.log(`   ⚡ Escaping ${productId} at ~$${currentPrice.toFixed(4)}...`);
+    
+    // We execute a special AI Proposal with a dummy reason to bypass hurdles
+    await executeAIProposal(
+      {
+        productId,
+        action: 'SELL',
+        confidence: 0.99,
+        reasoning: `Macro Liquidation (Hybrid Escape): ${reason}`
+      },
+      0, // Cash doesn't matter for sell
+      currentPrice
+    );
+  }
+}
+

@@ -25,6 +25,8 @@ export interface MemeTokenOpportunity {
   isPumpFun: boolean;
   score: number; // 0 to 100 quant breakout score
   timestamp: number;
+  description?: string;
+  socialsString?: string;
 }
 
 export interface MemeScannerFilters {
@@ -135,6 +137,17 @@ export async function scanTrendingMemeCoins(
       const hasSocials = p.info?.socials && p.info.socials.length > 0;
       const hasWebsites = p.info?.websites && p.info.websites.length > 0;
       if (!hasSocials && !hasWebsites) continue;
+      
+      let socialsString = '';
+      if (hasSocials) {
+        socialsString += p.info.socials.map((s: any) => `${s.type}: ${s.url}`).join(', ');
+      }
+      if (hasWebsites) {
+        socialsString += ' ' + p.info.websites.map((w: any) => `website: ${w.url}`).join(', ');
+      }
+      
+      const description = p.info?.imageUrl || ''; // Pump.fun Dexscreener api doesn't reliably put description in root info but we can pass whatever metadata we find, or maybe `p.info?.description` if they add it. wait DexScreener info object doesn't actually have `description` field for Pump.fun coins? Sometimes they do. Let's try `p.info?.description || p.info?.header || ''`
+      const actualDescription = p.info?.header || p.info?.description || p.baseToken?.name || '';
 
       // Calculate Breakout Score (0 - 100)
       let score = 50;
@@ -166,6 +179,8 @@ export async function scanTrendingMemeCoins(
         isPumpFun: isPump,
         score: Math.min(100, score),
         timestamp: now,
+        description: actualDescription,
+        socialsString: socialsString.trim(),
       });
     }
 

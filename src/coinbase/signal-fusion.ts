@@ -13,6 +13,7 @@ import { AIOrderProposal, getSocialEfficacy, QUANT_CONFIG } from './risk-manager
 import { initMLPredictor, generateMLSignal } from '../signals/ml-predictor';
 import { getMultiTimeframeConfluence } from '../signals/multi-timeframe';
 import { isBtcCorrelationSafe } from '../signals/btc-correlation';
+import { predictWinProbability, trainRandomForest, RFFeatures } from '../ml/random-forest';
 
 let mlInitialized = false;
 
@@ -48,6 +49,7 @@ export async function fuseSignals(productId: string): Promise<FusedSignalResult>
 
   if (!mlInitialized) {
     await initMLPredictor();
+    await trainRandomForest();
     mlInitialized = true;
   }
 
@@ -173,7 +175,7 @@ export async function fuseSignals(productId: string): Promise<FusedSignalResult>
     reasons.unshift(`🛑 OVERBOUGHT FILTER: RSI (${tech.rsi.toFixed(2)}) > 72. Refusing to buy local top.`);
   }
 
-  // 14. ML Predictor Override
+  // 14. ML Predictor Override (TensorFlow)
   if (mlSignal) {
     if (action === 'BUY' && mlSignal.direction === 'SHORT') {
       action = 'HOLD';
@@ -183,6 +185,27 @@ export async function fuseSignals(productId: string): Promise<FusedSignalResult>
       action = 'BUY';
       fusedConfidence = Math.min(1.0, fusedConfidence + 0.2);
       reasons.unshift(`🤖 ML BOOST: TensorFlow model confirms pump (P_Up: ${mlSignal.metadata.pUp}).`);
+    }
+  }
+
+  // 14.5. Random Forest Pre-Trade Filter
+  if (action === 'BUY') {
+    const rfFeatures: RFFeatures = {
+      rsi: tech.rsi,
+      atrPct: tech.atrPct,
+      trend: tech.trend,
+      ofi: ofiImbalance,
+      arbSpread: arbitrage.spreadPct,
+      btcRsi: 50 // Default placeholder, ideally we'd pass live BTC RSI
+    };
+    const rfWinProb = predictWinProbability(rfFeatures);
+    if (rfWinProb !== null && rfWinProb < 0.45) {
+      action = 'HOLD';
+      fusedConfidence = 0.40;
+      reasons.unshift(`🛑 RF FILTER: Random Forest predicts low win probability (${(rfWinProb * 100).toFixed(1)}%). Cancelling BUY.`);
+    } else if (rfWinProb !== null && rfWinProb >= 0.60) {
+      fusedConfidence = Math.min(1.0, fusedConfidence + 0.1);
+      reasons.push(`🌲 RF BOOST: High win probability predicted (${(rfWinProb * 100).toFixed(1)}%)`);
     }
   }
 

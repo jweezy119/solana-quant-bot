@@ -109,11 +109,18 @@ export function calculateBollinger(prices: number[], period = 20, multiplier = 2
   };
 }
 
+const signalCache: Record<string, { time: number; data: TechnicalSignal }> = {};
+
 /**
  * Generate comprehensive technical signal for a Coinbase product
  */
 export async function getTechnicalSignal(productId: string): Promise<TechnicalSignal> {
   const now = Math.floor(Date.now() / 1000);
+  
+  if (signalCache[productId] && now - signalCache[productId].time < 5) {
+    return signalCache[productId].data;
+  }
+
   const candleLookback = 3600 * 12; // 12 hours of 15m candles (approx 48 candles)
 
   // Fetch recent candles and ticker
@@ -228,7 +235,7 @@ export async function getTechnicalSignal(productId: string): Promise<TechnicalSi
     reasons.push(`Awaiting high-conviction setup`);
   }
 
-  return {
+  const result: TechnicalSignal = {
     productId,
     currentPrice: livePrice,
     direction,
@@ -250,4 +257,7 @@ export async function getTechnicalSignal(productId: string): Promise<TechnicalSi
       atr
     }
   };
+
+  signalCache[productId] = { time: now, data: result };
+  return result;
 }

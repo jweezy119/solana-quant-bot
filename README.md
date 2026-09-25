@@ -34,6 +34,8 @@ Designed with security and enterprise-grade access control patterns suitable for
 - **Kelly Criterion Sizing**: Mathematically optimizes position sizing based on historical win rate and win/loss ratio, scaled by signal confidence.
 - **Jito MEV Protection**: Submits bundles directly to Jito Block Engine to prevent sandwich attacks.
 - **Machine Learning Integration**: XGBoost model predicts price direction using normalized feature vectors.
+- **Meme Token Sniper**: Zero-block execution with strict Dev-Hold % filters to guarantee minimum developer skin-in-the-game on Pump.fun.
+- **Cloudflare Tunnel Dashboard**: Automatically exposes the internal React UI securely to the public internet so you can monitor the bot without SSH.
 - **Dockerized**: Fully containerized for resilient, automated local deployment.
 
 ## Project Structure
@@ -96,9 +98,10 @@ An autonomous trading bot for Coinbase Advanced Trade that fuses technical signa
 ### Features
 - **Multi-Pair Continuous Scanning**: Tracks `BTC-USD`, `ETH-USD`, `SOL-USD` (customizable).
 - **Technical Analysis Engine**: Real-time RSI(14), EMA(9/21) trend filtering, ATR volatility bands, and Bollinger Bands.
+- **Early Momentum Capture**: Reduced 24h Return thresholds allow the bot to identify and buy into newly forming trends before exhaustion.
 - **Social Media & Twitter Sentiment**: Ingests live sentiment and volume spikes from Twitter / X API v2 and breaking crypto news RSS feeds with NLP polarity scoring.
 - **Bayesian Signal Fusion**: Only triggers high-conviction trades when technical setups and social sentiment confirm each other.
-- **Risk Management & Position Sizing**: Kelly-style fractional allocation (max 25% exposure), automated Stop-Loss (2.5%) and Take-Profit (5.0%).
+- **Risk Management & Position Sizing**: Kelly-style fractional allocation (max 25% exposure), automated Stop-Loss (2.5%), Take-Profit (5.0%), and extended Maker Order Timeouts (60s) for optimal, fee-less fills.
 - **Simulation vs Live Execution**: Defaults to Paper Trading mode to test strategies safely without risking real funds.
 
 ### Running the Coinbase Bot

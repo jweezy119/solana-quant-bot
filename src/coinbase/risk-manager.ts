@@ -28,6 +28,7 @@ export interface AIOrderProposal {
   strategy?: string;
   maxHoldDurationMs?: number;
   atrPct?: number;     // Asset's current volatility for dynamic sizing
+  socialScore?: number; // Jev Narrative Sentiment (-1.0 to 1.0)
 }
 
 export interface CoinbasePosition {
@@ -459,6 +460,7 @@ export function calculateCompoundedSize(
   totalEquityUsd: number,
   confidence: number,
   existingPositionsCount: number,
+  socialScore: number = 0,
 ): { tradeAmountUsd: number; sizingPct: number; kellyRaw: number } {
   // Adaptive Kelly from the RECENT journal window (last 30 closes) so the sizer
   // follows the current regime instead of lifetime averages that lag by weeks.
@@ -491,8 +493,17 @@ export function calculateCompoundedSize(
   const correlationFactor = Math.max(0.60, 1 - existingPositionsCount * 0.15);
   const confidenceMultiplier = Math.max(0.5, confidence);
 
-  // Removed the 1.5x inflator that forced max position size
-  const dynamicFraction = safeKelly * confidenceMultiplier * correlationFactor;
+  let dynamicFraction = safeKelly * confidenceMultiplier * correlationFactor;
+  
+  // 🔥 PEGASUS DYNAMIC COMPOUNDING
+  if (socialScore >= 0.70) {
+      // Euphoria: Compound profits aggressively
+      dynamicFraction *= 1.50; 
+  } else if (socialScore <= -0.30) {
+      // Fear: Shrink positions, harvest into USDC
+      dynamicFraction *= 0.50;
+  }
+
   const cappedFraction = Math.min(QUANT_CONFIG.maxPositionPct, dynamicFraction);
 
   // Bankroll protection: below $100 the fixed $10 min-trade dominates; refuse to
@@ -628,7 +639,7 @@ export async function executeAIProposal(
         return { success: false, reason: 'Low liquidity' };
       }
 
-      const { tradeAmountUsd, sizingPct, kellyRaw } = calculateCompoundedSize(equity, proposal.confidence, openCount);
+      const { tradeAmountUsd, sizingPct, kellyRaw } = calculateCompoundedSize(equity, proposal.confidence, openCount, proposal.socialScore);
       let finalTradeUsd = Math.min(tradeAmountUsd, Math.max(0, availableCashUsd - QUANT_CONFIG.minCashReserveUsd));
       const minSize = parseFloat(product.quote_min_size || '1.0');
 
@@ -717,11 +728,11 @@ export async function executeAIProposal(
           if (!orderId) {
             throw new Error(`Limit order submitted but missing order_id`);
           }
-          console.log(`   📝 Maker Limit Order Submitted (ID: ${orderId}). Waiting up to 16s for maker fill...`);
+          console.log(`   📝 Maker Limit Order Submitted (ID: ${orderId}). Waiting up to 60s for maker fill...`);
 
-          // Poll up to 16s for maker fill
+          // Poll up to 60s for maker fill
           let isFilled = false;
-          for (let attempt = 0; attempt < 8; attempt++) {
+          for (let attempt = 0; attempt < 30; attempt++) {
             await new Promise((r) => setTimeout(r, 2000));
             try {
               const checkOrder = await getOrder(orderId);
@@ -743,7 +754,7 @@ export async function executeAIProposal(
           }
 
           if (!isFilled) {
-            console.log(`   ⏳ Maker Buy order not filled in 16s. Cancelling cleanly to protect capital & avoid taker fees...`);
+            console.log(`   ⏳ Maker Buy order not filled in 60s. Cancelling cleanly to protect capital & avoid taker fees...`);
             await cancelOrder(orderId);
             return { success: false, reason: 'Limit maker order timed out without fill' };
           }

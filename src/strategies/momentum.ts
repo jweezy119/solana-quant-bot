@@ -29,11 +29,11 @@ export class MomentumStrategy implements IStrategy {
       const tech = await getTechnicalSignal(productId);
 
       // Criteria for Momentum breakout:
-      // 1. Asset is strongly trending up on the day (> 6% return)
+      // 1. Asset is strongly trending up on the day (> 2.5% return)
       // 2. Short-term trend is UPTREND (EMA9 > EMA21)
-      // 3. RSI is healthy but not exhausted (between 50 and 75)
+      // 3. RSI is healthy but not exhausted (between 50 and 80)
       
-      if (return24h > 6.0 && tech.trend === 'UPTREND' && tech.rsi > 50 && tech.rsi < 75) {
+      if (return24h > 2.5 && tech.trend === 'UPTREND' && tech.rsi > 50 && tech.rsi < 80) {
         return {
           productId,
           action: 'BUY',
